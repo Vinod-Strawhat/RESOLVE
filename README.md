@@ -22,9 +22,10 @@ refund, or a warranty claim that a company refused - RESOLVE will eventually:
 9. Wait, remember the case, and follow up when appropriate.
 10. Continue until the case is resolved or human intervention is required.
 
-> **Status: early foundation phase.** Phase 2 (Strands agent tool-calling loop)
-> and Phase 3 (persistent conversation memory) are implemented. Case documents,
-> email, approvals, and autonomous follow-ups are not implemented yet.
+> **Status: early foundation phase.** Phases 1-4 are implemented: Strands agent
+> tool-calling loop, persistent conversation memory, structured case records,
+> and document ingestion with extraction + model analysis. Email, approvals, and
+> autonomous follow-ups are not implemented yet.
 
 ## Conversation memory (Phase 3)
 
@@ -76,6 +77,71 @@ An unknown or blank `session_id` returns `404 session not found`. Only user
 messages and assistant responses are stored; tool internals and model reasoning
 are not persisted.
 
+## Structured cases & documents (Phase 4)
+
+The agent can build a **structured case record** for a conversation and
+incorporate **uploaded documents** (`.txt`, `.md`, `.pdf`).
+
+### Case record
+
+When the user describes a concrete unresolved problem, the model can call
+`create_case` (once per conversation) and later `update_case` as new facts
+arrive (product, amount, purchase_date, seller, warranty_expiry,
+rejection_reason, status, next_action). Cases live in the `cases` table of the
+same SQLite database, linked to the conversation session.
+
+When a case exists for a session, the chat endpoint injects the active case id
+into the agent context so the model can keep the record up to date.
+
+Fetch a case and its documents:
+
+```http
+GET /api/cases/{case_id}
+```
+
+```json
+{
+  "case": {
+    "id": "adb15bc416d34a739860ddc57ac4befb",
+    "session_id": "7366a43952a04cba868030405fa658ad",
+    "category": "warranty",
+    "title": "Rejected laptop warranty claim - screen failure",
+    "amount": 48999.0,
+    "...": "..."
+  },
+  "documents": [
+    {
+      "id": "3f1c...2b.txt",
+      "case_id": "adb15bc416d34a739860ddc57ac4befb",
+      "filename": "invoice.txt",
+      "size_bytes": 128,
+      "extracted_text": "ASUS Vivobook ..."
+    }
+  ]
+}
+```
+
+### Document upload & analysis
+
+```http
+POST /api/cases/{case_id}/documents
+Content-Type: multipart/form-data
+```
+
+- Supported types: `.txt`, `.md`, `.pdf` (max 2 MB).
+- Plain text is decoded (utf-8/utf-16 with BOM/latin-1 fallback); PDF text is
+  extracted with `pypdf`.
+- Files are stored under `database/uploads/` (git-ignored) under generated
+  names; the original client filename is never used for the disk path.
+- Missing/invalid uploads return `400`; unknown case ids return `404`; the
+  server's internal `storage_path` is never exposed in responses.
+- After safe storage and extraction, the Strands agent receives the active case,
+  the current case record, and the extracted text, and can call `update_case`
+  with facts found in the document.
+
+No OCR is performed: scanned/image-only PDFs are stored but reported as having
+no readable text.
+
 ## Current MVP scope
 
 The MVP deliberately targets a narrow domain:
@@ -101,11 +167,11 @@ The MVP deliberately targets a narrow domain:
 RESOLVE/
 ├── backend/
 │   ├── agent/     # Strands agent (system prompt, tools, OpenRouter model)
-│   ├── tools/     # Strands @tool definitions (create_case_note)
-│   ├── services/  # note store + SQLite conversation memory + transcript helper
-│   └── main.py    # FastAPI entrypoint (/api/agent/chat, /health)
+│   ├── tools/     # Strands @tool definitions (create_case_note, create_case, update_case)
+│   ├── services/  # note store + SQLite (memory, cases, documents) + extraction
+│   └── main.py    # FastAPI entrypoint (/api/agent/chat, /api/cases, /health)
 ├── frontend/      # React + Vite app
-├── database/      # SQLite runtime files (resolve.db, git-ignored)
+├── database/      # SQLite runtime files + uploaded documents (git-ignored)
 ├── tests/         # pytest suite
 ├── docs/          # Design docs
 ├── .env.example
@@ -153,8 +219,11 @@ API keys.
   a final response.
 - **Phase 3 (done):** persistent conversation memory - SQLite-backed sessions
   and messages with multi-turn Strands context.
-- **Phase 4 (planned):** case-management features such as document ingestion,
-  case analysis, and generated next actions.
+- **Phase 4 (done):** structured case records (SQLite `cases` table, `create_case`
+  and `update_case` tools, active-case injection into chat) and document
+  ingestion (safe `.txt`/`.md`/`.pdf` upload, `pypdf` text extraction, and
+  Strands-based document analysis against the case record).
 
 Automated follow-ups, approval workflows, email, and any AgentCore/AWS
-deployment belong to **later phases** and are deliberately not implemented yet.
+deployment belong to **later phases** and are deliberately not implemented yet. 
+No OCR is performed on scanned documents.

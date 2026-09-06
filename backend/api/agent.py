@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from backend.agent.model import AgentConfigError
 from backend.agent.resolve_agent import build_resolve_agent
+from backend.services.case_store import get_case_store
 from backend.services.conversation import load_session_history, to_agent_transcript
 from backend.services.memory_store import get_memory_store
 
@@ -62,8 +63,26 @@ def chat(request: AgentChatRequest) -> AgentChatResponse:
     history = load_session_history(store, session_id)
     transcript = to_agent_transcript(history)
 
+    case = get_case_store().get_case_by_session(session_id)
+    if case is not None:
+        transcript.insert(
+            0,
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "text": (
+                            f"There is an active structured case for this conversation: "
+                            f"{case['id']}. New facts should be recorded on it using "
+                            "update_case."
+                        )
+                    }
+                ],
+            },
+        )
+
     try:
-        result = agent(prompt=transcript)
+        result = agent(prompt=transcript, invocation_state={"session_id": session_id})
     except Exception:
         logger.exception("RESOLVE agent invocation failed")
         raise HTTPException(

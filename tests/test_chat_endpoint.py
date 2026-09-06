@@ -22,7 +22,7 @@ class FakeAgent:
     def __init__(self):
         self.prompts = []
 
-    def __call__(self, prompt):
+    def __call__(self, prompt, **kwargs):
         self.prompts.append(prompt)
         message = SimpleNamespace(content=[{"text": "ok"}])
         return SimpleNamespace(message=message, stop_reason="end_turn")

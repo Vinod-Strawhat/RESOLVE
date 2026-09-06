@@ -4,8 +4,9 @@ from strands.hooks.events import AfterToolCallEvent
 from backend.agent.model import build_model
 from backend.agent.prompts import RESOLVE_SYSTEM_PROMPT
 from backend.tools.case_notes import create_case_note
+from backend.tools.cases import create_case, update_case
 
-RESOLVE_TOOLS = [create_case_note]
+RESOLVE_TOOLS = [create_case_note, create_case, update_case]
 
 
 def _make_tool_recorder(target: list[dict]):
