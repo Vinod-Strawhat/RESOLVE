@@ -1,0 +1,4 @@
+fastapi>=0.115
+uvicorn[standard]>=0.32
+strands-agents[openai]>=1.54
+python-dotenv>=1.0
