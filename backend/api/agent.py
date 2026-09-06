@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field
 
 from backend.agent.model import AgentConfigError
 from backend.agent.resolve_agent import build_resolve_agent
+from backend.services.conversation import load_session_history, to_agent_transcript
+from backend.services.memory_store import get_memory_store
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +14,7 @@ router = APIRouter(prefix="/api/agent", tags=["agent"])
 
 
 class AgentChatRequest(BaseModel):
+    session_id: str | None = Field(default=None, max_length=64)
     message: str = Field(min_length=1)
 
 
@@ -21,6 +24,7 @@ class ToolActivity(BaseModel):
 
 
 class AgentChatResponse(BaseModel):
+    session_id: str
     response: str
     tool_activity: list[ToolActivity]
 
@@ -43,8 +47,23 @@ def chat(request: AgentChatRequest) -> AgentChatResponse:
     except AgentConfigError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    store = get_memory_store()
+
+    if request.session_id is None:
+        session_id = store.create_session()
+    else:
+        session_id = request.session_id.strip()
+        if not session_id:
+            raise HTTPException(status_code=400, detail="session_id must not be blank")
+        if not store.session_exists(session_id):
+            raise HTTPException(status_code=404, detail="session not found")
+
+    store.save_message(session_id=session_id, role="user", content=message)
+    history = load_session_history(store, session_id)
+    transcript = to_agent_transcript(history)
+
     try:
-        result = agent(prompt=message)
+        result = agent(prompt=transcript)
     except Exception:
         logger.exception("RESOLVE agent invocation failed")
         raise HTTPException(
@@ -53,16 +72,20 @@ def chat(request: AgentChatRequest) -> AgentChatResponse:
 
     content = result.message
     if content is None:
-        return AgentChatResponse(response="", tool_activity=[])
-    content_block_list = content["content"] if isinstance(content, dict) else content.content
+        response_text = ""
+    else:
+        content_block_list = content["content"] if isinstance(content, dict) else content.content
+        text_parts = []
+        for block in content_block_list:
+            text = _get(block, "text")
+            if text:
+                text_parts.append(text)
+        response_text = " ".join(text_parts).strip()
 
-    text_parts = []
-    for block in content_block_list:
-        text = _get(block, "text")
-        if text:
-            text_parts.append(text)
+    store.save_message(session_id=session_id, role="assistant", content=response_text)
 
     return AgentChatResponse(
-        response=" ".join(text_parts).strip(),
+        session_id=session_id,
+        response=response_text,
         tool_activity=[ToolActivity(**item) for item in tool_activity],
     )

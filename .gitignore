@@ -31,6 +31,9 @@ frontend/.vite/
 database/*.db-wal
 database/*.db-shm
 
+# Phase 3 conversation memory database
+database/resolve.db
+
 # ---- Runtime notes (Phase 2 temporary storage) ----
 database/case_notes.json
 

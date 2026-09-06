@@ -10,7 +10,7 @@ load_dotenv()
 
 app = FastAPI(
     title="RESOLVE API",
-    version="0.2.0",
+    version="0.3.0",
 )
 
 app.include_router(agent_router)
