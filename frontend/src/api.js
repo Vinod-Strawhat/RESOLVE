@@ -92,3 +92,11 @@ export async function evaluateCase(caseId, outcome) {
     }),
   )
 }
+
+export async function evaluateResponseAI(caseId) {
+  return handle(
+    await fetch(`/api/cases/${encodeURIComponent(caseId)}/evaluate-response`, {
+      method: 'POST',
+    }),
+  )
+}

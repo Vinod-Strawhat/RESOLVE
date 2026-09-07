@@ -656,6 +656,128 @@
   border: 1px solid rgba(139, 76, 144, 0.45);
 }
 
+/* ---- AI evaluation section ---- */
+.ai-eval-section {
+  margin-top: 4px;
+}
+
+.ai-eval-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 8px;
+  color: var(--text-muted, #777);
+  font-size: 12px;
+}
+
+.ai-eval-divider::before,
+.ai-eval-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.ai-eval-button {
+  all: unset;
+  display: inline-block;
+  padding: 8px 14px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #4a6cf7, #6a3dd9);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.ai-eval-button:hover {
+  filter: brightness(1.1);
+}
+
+.ai-eval-button:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.ai-evaluation-result {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgba(74, 108, 247, 0.4);
+  background: rgba(74, 108, 247, 0.06);
+  border-radius: 6px;
+}
+
+.ai-evaluation-result h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--text-h);
+}
+
+.ai-evaluation-result .eval-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-evaluation-result .eval-meta div {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.ai-evaluation-result dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.6;
+  flex: 0 0 70px;
+}
+
+.ai-evaluation-result .eval-meta dd {
+  margin: 0;
+  color: var(--text-h);
+}
+
+.eval-outcome {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+
+.eval-outcome.eval-resolved {
+  color: #1a7f37;
+  background: rgba(26, 127, 55, 0.12);
+}
+
+.eval-outcome.eval-needs_follow_up {
+  color: #a56a14;
+  background: rgba(165, 106, 20, 0.12);
+}
+
+.eval-outcome.eval-human_intervention {
+  color: #8b4c90;
+  background: rgba(139, 76, 144, 0.12);
+}
+
+.ai-evaluation-result .eval-field {
+  margin-top: 10px;
+}
+
+.ai-evaluation-result .eval-field dd {
+  margin: 2px 0 0;
+  color: var(--text-h);
+  white-space: pre-wrap;
+}
+
+.ai-evaluation-result .eval-field dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.6;
+}
+
 /* ---- Responsive ---- */
 @media (max-width: 900px) {
   .layout {

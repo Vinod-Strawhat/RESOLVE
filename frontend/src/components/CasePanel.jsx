@@ -134,8 +134,11 @@ function ResponseTestingPanel({
   responses,
   onRecordResponse,
   onEvaluate,
+  onEvaluateAI,
   responseBusy,
   evaluateBusy,
+  aiEvaluateBusy,
+  aiEvaluation,
 }) {
   const [source, setSource] = useState('simulated_support')
   const [content, setContent] = useState('')
@@ -239,6 +242,47 @@ function ResponseTestingPanel({
         </div>
       )}
 
+      {canEvaluate && (
+        <div className="ai-eval-section">
+          <div className="ai-eval-divider">
+            <span>or</span>
+          </div>
+          <button
+            className="ai-eval-button"
+            onClick={onEvaluateAI}
+            disabled={aiEvaluateBusy}
+          >
+            {aiEvaluateBusy ? 'Analyzing response…' : 'Analyze Response with AI'}
+          </button>
+        </div>
+      )}
+
+      {aiEvaluation && (
+        <div className="ai-evaluation-result">
+          <h3>AI Evaluation</h3>
+          <dl className="eval-meta">
+            <div>
+              <dt>Outcome</dt>
+              <dd className={`eval-outcome eval-${aiEvaluation.outcome}`}>
+                {STATUS_LABELS[aiEvaluation.outcome] || aiEvaluation.outcome}
+              </dd>
+            </div>
+            <div>
+              <dt>Confidence</dt>
+              <dd>{Math.round(aiEvaluation.confidence * 100)}%</dd>
+            </div>
+          </dl>
+          <div className="eval-field">
+            <dt>Reason</dt>
+            <dd>{aiEvaluation.reason}</dd>
+          </div>
+          <div className="eval-field">
+            <dt>Next step</dt>
+            <dd>{aiEvaluation.next_step}</dd>
+          </div>
+        </div>
+      )}
+
       {!canEvaluate && caseData.status === 'response_received' && (
         <p className="empty-hint">Evaluate the latest response to continue.</p>
       )}
@@ -256,11 +300,14 @@ function CasePanel({
   onExecute,
   onRecordResponse,
   onEvaluate,
+  onEvaluateAI,
   uploadBusy,
   decideBusy,
   executeBusy,
   responseBusy,
   evaluateBusy,
+  aiEvaluateBusy,
+  aiEvaluation,
 }) {
   return (
     <div className="case-column">
@@ -282,8 +329,11 @@ function CasePanel({
         responses={responses}
         onRecordResponse={onRecordResponse}
         onEvaluate={onEvaluate}
+        onEvaluateAI={onEvaluateAI}
         responseBusy={responseBusy}
         evaluateBusy={evaluateBusy}
+        aiEvaluateBusy={aiEvaluateBusy}
+        aiEvaluation={aiEvaluation}
       />
     </div>
   )

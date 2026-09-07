@@ -7,6 +7,11 @@ from backend.services.case_store import (
     EVALUATION_OUTCOMES,
     get_case_store,
 )
+from backend.services.response_evaluator import (
+    EvaluationOutcome,
+    evaluate_response,
+    validate_evaluation_result,
+)
 from backend.services.response_store import get_response_store
 
 logger = logging.getLogger(__name__)
@@ -89,3 +94,57 @@ def evaluate_case(case_id: str, request: EvaluateRequest) -> dict:
 
     updated = get_case_store().transition_status(case_id, outcome)
     return {"case": updated}
+
+
+@router.post("/{case_id}/evaluate-response")
+def evaluate_response_ai(case_id: str) -> dict:
+    """AI-powered response evaluation.
+
+    Invokes the Strands evaluator to analyse the case and response history,
+    then safely applies the resulting state transition through the machine.
+    The model never modifies case state directly.
+    """
+    case_store = get_case_store()
+    case = _case_or_404(case_id)
+
+    if case["status"] != "response_received":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"case in status {case['status']!r} cannot be evaluated; "
+                "must be response_received"
+            ),
+        )
+
+    try:
+        result: EvaluationOutcome = evaluate_response(
+            case_store,
+            get_response_store(),
+            case_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"evaluation failed: {exc}",
+        ) from exc
+    except Exception as exc:
+        logger.exception("unexpected evaluator error")
+        raise HTTPException(
+            status_code=500,
+            detail="evaluation service error",
+        ) from exc
+
+    try:
+        updated = case_store.transition_status(case_id, result.outcome)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return {
+        "evaluation": {
+            "outcome": result.outcome,
+            "confidence": result.confidence,
+            "reason": result.reason,
+            "next_step": result.next_step,
+        },
+        "case": updated,
+    }

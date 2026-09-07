@@ -3,6 +3,7 @@ import {
   ApiError,
   decideAction,
   evaluateCase,
+  evaluateResponseAI,
   executeAction,
   getActions,
   getCase,
@@ -45,6 +46,8 @@ function App() {
   const [responses, setResponses] = useState([])
   const [responseBusy, setResponseBusy] = useState(false)
   const [evaluateBusy, setEvaluateBusy] = useState(false)
+  const [aiEvaluateBusy, setAiEvaluateBusy] = useState(false)
+  const [aiEvaluation, setAiEvaluation] = useState(null)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
 
@@ -210,6 +213,24 @@ function App() {
     }
   }
 
+  async function handleEvaluateAI() {
+    if (!caseId) return
+    setError(null)
+    setNotice(null)
+    setAiEvaluation(null)
+    setAiEvaluateBusy(true)
+    try {
+      const body = await evaluateResponseAI(caseId)
+      setAiEvaluation(body.evaluation)
+      setCaseData(body.case)
+      setNotice(`AI evaluation applied: ${body.evaluation.outcome}.`)
+    } catch (err) {
+      setError(friendlyMessage(err))
+    } finally {
+      setAiEvaluateBusy(false)
+    }
+  }
+
   function startOver() {
     setSessionId(null)
     setCaseId(null)
@@ -218,6 +239,7 @@ function App() {
     setDocuments([])
     setActions([])
     setResponses([])
+    setAiEvaluation(null)
     setError(null)
     setNotice(null)
     setScreen('start')
@@ -259,12 +281,15 @@ function App() {
           onExecute={handleExecute}
           onRecordResponse={handleRecordResponse}
           onEvaluate={handleEvaluate}
+          onEvaluateAI={handleEvaluateAI}
           responses={responses}
           uploadBusy={uploadBusy}
           decideBusy={decideBusy}
           executeBusy={executeBusy}
           responseBusy={responseBusy}
           evaluateBusy={evaluateBusy}
+          aiEvaluateBusy={aiEvaluateBusy}
+          aiEvaluation={aiEvaluation}
         />
       </div>
     </main>

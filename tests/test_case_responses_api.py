@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from backend.main import app
 from backend.services.case_store import CaseStore
+from backend.services.response_evaluator import EvaluationOutcome
 from backend.services.response_store import ResponseStore
 
 
@@ -222,3 +223,113 @@ def test_evaluate_human_intervention_is_terminal(env):
         f"/api/cases/{env['case_id']}/evaluate", json={"outcome": "resolved"}
     )
     assert second.status_code == 409
+
+
+# --- AI evaluate-response endpoint ---
+
+def _patch_ai_evaluator(monkeypatch, outcome, confidence=0.87):
+    def fake_evaluate(case_store, response_store, case_id, model=None):
+        return EvaluationOutcome(
+            outcome=outcome,
+            confidence=confidence,
+            reason="A concise, grounded reason.",
+            next_step="A concrete next step.",
+        )
+
+    monkeypatch.setattr(
+        "backend.api.case_responses.evaluate_response", fake_evaluate
+    )
+    return fake_evaluate
+
+
+@pytest.mark.parametrize("outcome", ["resolved", "needs_follow_up", "human_intervention"])
+def test_ai_evaluate_success(env, monkeypatch, outcome):
+    _to_status(env, "awaiting_response")
+    _to_status(env, "response_received")
+    _patch_ai_evaluator(monkeypatch, outcome)
+    response = env["client"].post(
+        f"/api/cases/{env['case_id']}/evaluate-response"
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["evaluation"]["outcome"] == outcome
+    assert body["evaluation"]["confidence"] == 0.87
+    assert body["evaluation"]["reason"]
+    assert body["evaluation"]["next_step"]
+    assert body["case"]["status"] == outcome
+
+
+def test_ai_evaluate_unknown_case_404(env, monkeypatch):
+    _patch_ai_evaluator(monkeypatch, "resolved", confidence=0.9)
+    response = env["client"].post("/api/cases/missing/evaluate-response")
+    assert response.status_code == 404
+
+
+def test_ai_evaluate_wrong_state_409(env, monkeypatch):
+    _patch_ai_evaluator(monkeypatch, "resolved", confidence=0.9)
+    response = env["client"].post(
+        f"/api/cases/{env['case_id']}/evaluate-response"
+    )
+    assert response.status_code == 409
+    assert "cannot be evaluated" in response.json()["detail"]
+
+
+def test_ai_evaluate_failure_leaves_state_unchanged(env, monkeypatch):
+    _to_status(env, "awaiting_response")
+    _to_status(env, "response_received")
+
+    def failing_evaluate(case_store, response_store, case_id, model=None):
+        raise ValueError("model unavailable: 429")
+
+    monkeypatch.setattr(
+        "backend.api.case_responses.evaluate_response", failing_evaluate
+    )
+    response = env["client"].post(
+        f"/api/cases/{env['case_id']}/evaluate-response"
+    )
+    assert response.status_code == 422
+    assert env["case_store"].get_case(env["case_id"])["status"] == "response_received"
+
+
+def test_ai_evaluate_invalid_model_result_leaves_state_unchanged(env, monkeypatch):
+    _to_status(env, "awaiting_response")
+    _to_status(env, "response_received")
+
+    def invalid_evaluate(case_store, response_store, case_id, model=None):
+        raise ValueError("invalid evaluation output: outcome 'escalate'")
+
+    monkeypatch.setattr(
+        "backend.api.case_responses.evaluate_response", invalid_evaluate
+    )
+    response = env["client"].post(
+        f"/api/cases/{env['case_id']}/evaluate-response"
+    )
+    assert response.status_code == 422
+    assert env["case_store"].get_case(env["case_id"])["status"] == "response_received"
+
+
+def test_ai_evaluate_unexpected_error_500(env, monkeypatch):
+    _to_status(env, "awaiting_response")
+    _to_status(env, "response_received")
+
+    def exploding_evaluate(case_store, response_store, case_id, model=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "backend.api.case_responses.evaluate_response", exploding_evaluate
+    )
+    response = env["client"].post(
+        f"/api/cases/{env['case_id']}/evaluate-response"
+    )
+    assert response.status_code == 500
+    assert env["case_store"].get_case(env["case_id"])["status"] == "response_received"
+
+
+def test_ai_evaluate_sets_resolved_at_for_resolved(env, monkeypatch):
+    _to_status(env, "awaiting_response")
+    _to_status(env, "response_received")
+    _patch_ai_evaluator(monkeypatch, "resolved")
+    response = env["client"].post(
+        f"/api/cases/{env['case_id']}/evaluate-response"
+    )
+    assert response.json()["case"]["resolved_at"] is not None
