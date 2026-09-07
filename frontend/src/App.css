@@ -363,6 +363,21 @@
   border-color: rgba(211, 51, 51, 0.4);
 }
 
+.status-executing {
+  background: rgba(234, 179, 8, 0.14);
+  border-color: rgba(234, 179, 8, 0.45);
+}
+
+.status-executed {
+  background: rgba(26, 127, 55, 0.15);
+  border-color: rgba(26, 127, 55, 0.4);
+}
+
+.status-failed {
+  background: rgba(211, 51, 51, 0.12);
+  border-color: rgba(211, 51, 51, 0.4);
+}
+
 .action-meta {
   display: flex;
   gap: 20px;
@@ -448,6 +463,39 @@
 
 .action-buttons .reject {
   background: #b23b3b;
+}
+
+.action-buttons .execute {
+  background: #1a7f37;
+}
+
+.execution-meta {
+  display: flex;
+  gap: 20px;
+  margin: 0 0 10px;
+}
+
+.execution-meta div {
+  display: flex;
+  flex-direction: column;
+}
+
+.execution-meta dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.6;
+}
+
+.execution-meta dd {
+  margin: 0;
+  color: var(--text-h);
+}
+
+.execution-result {
+  margin: 0 0 10px;
+  color: var(--text-h);
+  white-space: pre-wrap;
 }
 
 /* ---- Shared status lines ---- */

@@ -119,7 +119,17 @@ function formatBytes(bytes) {
   return kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${kb.toFixed(0)} KB`
 }
 
-function CasePanel({ caseData, documents, actions, onUpload, onDecide, uploadBusy, decideBusy }) {
+function CasePanel({
+  caseData,
+  documents,
+  actions,
+  onUpload,
+  onDecide,
+  onExecute,
+  uploadBusy,
+  decideBusy,
+  executeBusy,
+}) {
   return (
     <div className="case-column">
       <CaseDetails caseData={caseData} />
@@ -128,7 +138,13 @@ function CasePanel({ caseData, documents, actions, onUpload, onDecide, uploadBus
         onUpload={onUpload}
         busy={uploadBusy}
       />
-      <ActionReview actions={actions} onDecide={onDecide} busy={decideBusy} />
+      <ActionReview
+        actions={actions}
+        onDecide={onDecide}
+        onExecute={onExecute}
+        busy={decideBusy}
+        executeBusy={executeBusy}
+      />
     </div>
   )
 }

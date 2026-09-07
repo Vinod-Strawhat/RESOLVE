@@ -10,12 +10,23 @@ ACTION_TYPES = ("warranty_dispute", "refund_request", "return_request", "escalat
 
 ACTION_FIELDS = ("type", "target", "title", "reason", "content")
 
-VALID_STATUSES = ("draft", "pending_approval", "approved", "rejected")
+VALID_STATUSES = (
+    "draft",
+    "pending_approval",
+    "approved",
+    "executing",
+    "executed",
+    "failed",
+    "rejected",
+)
 
-_TRANSITIONS = {
-    "draft": "pending_approval",
-    "pending_approval": None,
-}
+_EXECUTION_COLUMNS = (
+    ("execution_status", "TEXT"),
+    ("executed_at", "TEXT"),
+    ("execution_reference", "TEXT"),
+    ("execution_result", "TEXT"),
+    ("execution_error", "TEXT"),
+)
 
 _ACTIONS_DDL = """
 CREATE TABLE IF NOT EXISTS actions (
@@ -27,6 +38,11 @@ CREATE TABLE IF NOT EXISTS actions (
     reason TEXT NOT NULL,
     content TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'draft',
+    execution_status TEXT,
+    executed_at TEXT,
+    execution_reference TEXT,
+    execution_result TEXT,
+    execution_error TEXT,
     created_at TEXT NOT NULL,
     approved_at TEXT,
     rejected_at TEXT,
@@ -50,6 +66,17 @@ class ActionStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(_ACTIONS_DDL)
+        self._ensure_execution_columns()
+
+    def _ensure_execution_columns(self) -> None:
+        """Migrate existing actions tables so Phase 6 execution fields exist."""
+        with self._connect() as conn:
+            existing = {
+                row["name"] for row in conn.execute("PRAGMA table_info(actions)")
+            }
+            for name, declaration in _EXECUTION_COLUMNS:
+                if name not in existing:
+                    conn.execute(f"ALTER TABLE actions ADD COLUMN {name} {declaration}")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path, timeout=5.0)
@@ -66,6 +93,11 @@ class ActionStore:
         "reason",
         "content",
         "status",
+        "execution_status",
+        "executed_at",
+        "execution_reference",
+        "execution_result",
+        "execution_error",
         "created_at",
         "approved_at",
         "rejected_at",
@@ -177,6 +209,66 @@ class ActionStore:
             conn.execute(
                 "UPDATE actions SET status = 'pending_approval' WHERE id = ?",
                 (action_id,),
+            )
+        return self.get_action(action_id)
+
+    def begin_execution(self, action_id: str) -> dict:
+        """Transition an approved action into the executing state.
+
+        Only approved actions may be executed. A completed (executed) action
+        must never be executed twice.
+        """
+        action = self.get_action(action_id)
+        if action is None:
+            raise ValueError(f"action not found: {action_id}")
+        if action["status"] != "approved":
+            raise ValueError(
+                f"cannot execute action in status {action['status']!r}; "
+                "only approved actions may be executed"
+            )
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE actions SET status = 'executing', execution_status = 'executing' "
+                "WHERE id = ?",
+                (action_id,),
+            )
+        return self.get_action(action_id)
+
+    def complete_execution(
+        self, action_id: str, *, reference: str, result: str
+    ) -> dict:
+        action = self.get_action(action_id)
+        if action is None:
+            raise ValueError(f"action not found: {action_id}")
+        if action["status"] != "executing":
+            raise ValueError(
+                f"cannot complete execution in status {action['status']!r}; "
+                "must be executing"
+            )
+        now = _now()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE actions SET status = 'executed', execution_status = 'executed', "
+                "executed_at = ?, execution_reference = ?, execution_result = ? "
+                "WHERE id = ?",
+                (now, reference, result, action_id),
+            )
+        return self.get_action(action_id)
+
+    def fail_execution(self, action_id: str, *, error: str) -> dict:
+        action = self.get_action(action_id)
+        if action is None:
+            raise ValueError(f"action not found: {action_id}")
+        if action["status"] != "executing":
+            raise ValueError(
+                f"cannot fail execution in status {action['status']!r}; "
+                "must be executing"
+            )
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE actions SET status = 'failed', execution_status = 'failed', "
+                "execution_error = ? WHERE id = ?",
+                (error, action_id),
             )
         return self.get_action(action_id)
 

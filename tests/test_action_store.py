@@ -29,6 +29,12 @@ def _draft(store, case_id, **overrides):
     return store.create_action(case_id, **kwargs)
 
 
+def _approved(store, case_id, **overrides):
+    action = _draft(store, case_id, **overrides)
+    store.submit_for_approval(action["id"])
+    return store.approve_action(action["id"])
+
+
 # --- A. Action creation ---
 
 def test_create_action(stores):
@@ -215,3 +221,110 @@ def test_restart_persistence(tmp_path):
     assert len(actions) == 1
     assert actions[0]["title"] == "T"
     assert actions[0]["target"] == "Target"
+
+
+# --- H. Execution transitions ---
+
+def test_begin_execution_approved_action(stores):
+    action = _approved(stores["action_store"], stores["case_id"])
+    executing = stores["action_store"].begin_execution(action["id"])
+    assert executing["status"] == "executing"
+    assert executing["execution_status"] == "executing"
+    assert executing["executed_at"] is None
+    assert executing["execution_reference"] is None
+
+
+def test_begin_execution_draft_rejected(stores):
+    action = _draft(stores["action_store"], stores["case_id"])
+    with pytest.raises(ValueError, match="only approved actions may be executed"):
+        stores["action_store"].begin_execution(action["id"])
+
+
+def test_begin_execution_pending_rejected(stores):
+    action = _draft(stores["action_store"], stores["case_id"])
+    stores["action_store"].submit_for_approval(action["id"])
+    with pytest.raises(ValueError, match="only approved actions may be executed"):
+        stores["action_store"].begin_execution(action["id"])
+
+
+def test_begin_execution_rejected_action_rejected(stores):
+    action = _draft(stores["action_store"], stores["case_id"])
+    stores["action_store"].submit_for_approval(action["id"])
+    stores["action_store"].reject_action(action["id"])
+    with pytest.raises(ValueError, match="only approved actions may be executed"):
+        stores["action_store"].begin_execution(action["id"])
+
+
+def test_begin_execution_unknown_raises(stores):
+    with pytest.raises(ValueError, match="action not found"):
+        stores["action_store"].begin_execution("missing")
+
+
+def test_begin_execution_executed_action_never_twice(stores):
+    action = _approved(stores["action_store"], stores["case_id"])
+    stores["action_store"].begin_execution(action["id"])
+    stores["action_store"].complete_execution(
+        action["id"], reference="REF-1", result="done"
+    )
+    with pytest.raises(ValueError, match="only approved actions may be executed"):
+        stores["action_store"].begin_execution(action["id"])
+
+
+def test_complete_execution_persists_result_reference_and_timestamp(stores):
+    action = _approved(stores["action_store"], stores["case_id"])
+    stores["action_store"].begin_execution(action["id"])
+    completed = stores["action_store"].complete_execution(
+        action["id"], reference="RESOLVE-ACTION-1234ABCD", result="simulated submitted"
+    )
+    assert completed["status"] == "executed"
+    assert completed["execution_status"] == "executed"
+    assert completed["execution_reference"] == "RESOLVE-ACTION-1234ABCD"
+    assert completed["execution_result"] == "simulated submitted"
+    assert completed["executed_at"] is not None
+    assert completed["execution_error"] is None
+
+
+def test_complete_execution_wrong_state_rejected(stores):
+    action = _approved(stores["action_store"], stores["case_id"])
+    with pytest.raises(ValueError, match="must be executing"):
+        stores["action_store"].complete_execution(
+            action["id"], reference="R", result="C"
+        )
+
+
+def test_complete_execution_unknown_raises(stores):
+    with pytest.raises(ValueError, match="action not found"):
+        stores["action_store"].complete_execution("missing", reference="R", result="C")
+
+
+def test_fail_execution_persists_error(stores):
+    action = _approved(stores["action_store"], stores["case_id"])
+    stores["action_store"].begin_execution(action["id"])
+    failed = stores["action_store"].fail_execution(action["id"], error="boom")
+    assert failed["status"] == "failed"
+    assert failed["execution_status"] == "failed"
+    assert failed["execution_error"] == "boom"
+    assert failed["executed_at"] is None
+
+
+def test_execution_state_persists_across_restart(tmp_path):
+    path = tmp_path / "resolve.db"
+    case_store = CaseStore(path)
+    case_id = case_store.create_case(
+        "s1", title="A", category="warranty", description="D"
+    )["id"]
+    store_one = ActionStore(path)
+    action = _approved(store_one, case_id)
+    store_one.begin_execution(action["id"])
+    store_one.complete_execution(
+        action["id"], reference="RESOLVE-ACTION-ABCD1234", result="executed"
+    )
+    del store_one
+
+    store_two = ActionStore(path)
+    reloaded = store_two.get_action(action["id"])
+    assert reloaded["status"] == "executed"
+    assert reloaded["execution_status"] == "executed"
+    assert reloaded["execution_reference"] == "RESOLVE-ACTION-ABCD1234"
+    assert reloaded["execution_result"] == "executed"
+    assert reloaded["executed_at"] is not None

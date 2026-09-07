@@ -2,6 +2,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
+from backend.services.action_executor import get_executor
 from backend.services.action_store import get_action_store
 from backend.services.case_store import get_case_store
 
@@ -48,3 +49,13 @@ def reject_action(action_id: str) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"action": action}
+
+
+@router.post("/api/actions/{action_id}/execute")
+def execute_action(action_id: str) -> dict:
+    _get_action_or_404(action_id)
+    try:
+        get_executor().execute(action_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"action": get_action_store().get_action(action_id)}

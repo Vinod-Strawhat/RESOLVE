@@ -2,6 +2,7 @@ import { useState } from 'react'
 import {
   ApiError,
   decideAction,
+  executeAction,
   getActions,
   getCase,
   postChat,
@@ -37,6 +38,7 @@ function App() {
   const [chatBusy, setChatBusy] = useState(false)
   const [uploadBusy, setUploadBusy] = useState(false)
   const [decideBusy, setDecideBusy] = useState(false)
+  const [executeBusy, setExecuteBusy] = useState(false)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
 
@@ -142,6 +144,27 @@ function App() {
     }
   }
 
+  async function handleExecute(actionId) {
+    setError(null)
+    setNotice(null)
+    setExecuteBusy(true)
+    try {
+      const body = await executeAction(actionId)
+      setActions((current) =>
+        current.map((action) => (action.id === actionId ? body.action : action)),
+      )
+      if (caseId) {
+        const caseResponse = await getCase(caseId)
+        setCaseData(caseResponse.case)
+      }
+      setNotice('Action executed.')
+    } catch (err) {
+      setError(friendlyMessage(err))
+    } finally {
+      setExecuteBusy(false)
+    }
+  }
+
   function startOver() {
     setSessionId(null)
     setCaseId(null)
@@ -187,8 +210,10 @@ function App() {
           actions={actions}
           onUpload={handleUpload}
           onDecide={handleDecide}
+          onExecute={handleExecute}
           uploadBusy={uploadBusy}
           decideBusy={decideBusy}
+          executeBusy={executeBusy}
         />
       </div>
     </main>

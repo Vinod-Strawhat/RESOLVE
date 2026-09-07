@@ -1,6 +1,9 @@
-function ActionCard({ action, onDecide, busy }) {
+function ActionCard({ action, onDecide, onExecute, busy, executeBusy }) {
   const isPending = action.status === 'pending_approval'
   const isApproved = action.status === 'approved'
+  const isExecuting = action.status === 'executing'
+  const isExecuted = action.status === 'executed'
+  const isFailed = action.status === 'failed'
   const isRejected = action.status === 'rejected'
 
   return (
@@ -36,11 +39,54 @@ function ActionCard({ action, onDecide, busy }) {
       ) : null}
 
       {isApproved ? (
-        <div className="approval-result approved">Approved — ready for execution.</div>
+        <div className="approval-result approved">
+          Approved — ready for execution.
+        </div>
+      ) : null}
+
+      {isExecuting ? (
+        <div className="approval-result">Executing…</div>
+      ) : null}
+
+      {isExecuted ? (
+        <div className="approval-result approved">Executed.</div>
+      ) : null}
+
+      {isFailed ? (
+        <div className="approval-result rejected">Execution failed.</div>
       ) : null}
 
       {isRejected ? (
         <div className="approval-result rejected">Action rejected.</div>
+      ) : null}
+
+      {isExecuted ? (
+        <dl className="execution-meta">
+          {action.execution_reference ? (
+            <div>
+              <dt>Execution reference</dt>
+              <dd>{action.execution_reference}</dd>
+            </div>
+          ) : null}
+          {action.executed_at ? (
+            <div>
+              <dt>Executed at</dt>
+              <dd>{new Date(action.executed_at).toLocaleString()}</dd>
+            </div>
+          ) : null}
+        </dl>
+      ) : null}
+
+      {isExecuted && action.execution_result ? (
+        <p className="execution-result">{action.execution_result}</p>
+      ) : null}
+
+      {isFailed && action.execution_error ? (
+        <p className="execution-result error">{action.execution_error}</p>
+      ) : null}
+
+      {isExecuted ? (
+        <p className="empty-hint">Case status is now: Awaiting response.</p>
       ) : null}
 
       {isPending ? (
@@ -61,13 +107,30 @@ function ActionCard({ action, onDecide, busy }) {
           </button>
         </div>
       ) : null}
+
+      {isApproved ? (
+        <div className="action-buttons">
+          <button
+            className="execute"
+            onClick={() => onExecute(action.id)}
+            disabled={executeBusy}
+          >
+            {executeBusy ? 'Executing…' : 'Execute Action'}
+          </button>
+        </div>
+      ) : null}
     </article>
   )
 }
 
-function ActionReview({ actions, onDecide, busy }) {
+function ActionReview({ actions, onDecide, onExecute, busy, executeBusy }) {
   const relevant = actions.filter((action) => action.status !== 'draft')
-  const pending = relevant.find((action) => action.status === 'pending_approval')
+  const waiting = relevant.find(
+    (action) =>
+      action.status === 'pending_approval' ||
+      action.status === 'approved' ||
+      action.status === 'executing',
+  )
 
   if (relevant.length === 0) {
     return (
@@ -87,11 +150,18 @@ function ActionReview({ actions, onDecide, busy }) {
       <div className="panel-heading">
         <h2>Recommended Action</h2>
         <p className="panel-hint">
-          {pending ? 'Waiting for your decision.' : 'No action currently waiting for approval.'}
+          {waiting ? 'Awaiting your decision or execution.' : 'No action currently waiting for approval.'}
         </p>
       </div>
       {relevant.map((action) => (
-        <ActionCard key={action.id} action={action} onDecide={onDecide} busy={busy} />
+        <ActionCard
+          key={action.id}
+          action={action}
+          onDecide={onDecide}
+          onExecute={onExecute}
+          busy={busy}
+          executeBusy={executeBusy}
+        />
       ))}
     </div>
   )

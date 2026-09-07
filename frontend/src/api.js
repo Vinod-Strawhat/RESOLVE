@@ -58,3 +58,11 @@ export async function decideAction(actionId, decision) {
     }),
   )
 }
+
+export async function executeAction(actionId) {
+  return handle(
+    await fetch(`/api/actions/${encodeURIComponent(actionId)}/execute`, {
+      method: 'POST',
+    }),
+  )
+}
