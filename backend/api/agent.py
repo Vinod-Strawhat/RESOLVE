@@ -26,6 +26,7 @@ class ToolActivity(BaseModel):
 
 class AgentChatResponse(BaseModel):
     session_id: str
+    case_id: str | None = None
     response: str
     tool_activity: list[ToolActivity]
 
@@ -103,8 +104,10 @@ def chat(request: AgentChatRequest) -> AgentChatResponse:
 
     store.save_message(session_id=session_id, role="assistant", content=response_text)
 
+    active_case = get_case_store().get_case_by_session(session_id)
     return AgentChatResponse(
         session_id=session_id,
+        case_id=active_case["id"] if active_case else None,
         response=response_text,
         tool_activity=[ToolActivity(**item) for item in tool_activity],
     )

@@ -6,7 +6,10 @@ from fastapi.testclient import TestClient
 from backend.agent.resolve_agent import _make_tool_recorder
 from backend.api.agent import ToolActivity
 from backend.main import app
+from backend.services.case_store import CaseStore
 from backend.services.memory_store import MemoryStore
+
+import backend.api.agent as agent_module
 
 client = TestClient(app)
 
@@ -130,3 +133,67 @@ def test_tool_recorder_failure_event():
 def test_tool_activity_response_shape():
     activity = ToolActivity(tool="create_case_note", status="executed")
     assert activity.model_dump() == {"tool": "create_case_note", "status": "executed"}
+
+
+class CaseCreatingFakeAgent(FakeAgent):
+    def __call__(self, prompt, **kwargs):
+        session_id = kwargs.get("invocation_state", {}).get("session_id")
+        agent_module.get_case_store().create_case(
+            session_id,
+            title="Rejected warranty claim",
+            category="warranty",
+            description="Company refused coverage.",
+        )
+        return super().__call__(prompt, **kwargs)
+
+
+def test_chat_returns_null_case_id_when_no_case(fake_agent, store):
+    response = client.post("/api/agent/chat", json={"message": "hello"})
+    assert response.status_code == 200
+    assert response.json()["case_id"] is None
+
+
+def test_chat_returns_case_id_when_agent_creates_case(tmp_path, monkeypatch):
+    cases = CaseStore(tmp_path / "resolve.db")
+    store = MemoryStore(tmp_path / "resolve.db")
+    monkeypatch.setattr("backend.api.agent.get_memory_store", lambda: store)
+    monkeypatch.setattr("backend.api.agent.get_case_store", lambda: cases)
+    monkeypatch.setattr(
+        "backend.api.agent.build_resolve_agent",
+        lambda tool_activity=None: CaseCreatingFakeAgent(),
+    )
+    response = client.post(
+        "/api/agent/chat",
+        json={"message": "My laptop warranty claim was rejected."},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["case_id"]) == 32
+    case = cases.get_case(body["case_id"])
+    assert case is not None
+    assert case["session_id"] == body["session_id"]
+
+
+def test_chat_returns_case_id_for_existing_case(tmp_path, monkeypatch):
+    cases = CaseStore(tmp_path / "resolve.db")
+    store = MemoryStore(tmp_path / "resolve.db")
+    monkeypatch.setattr("backend.api.agent.get_memory_store", lambda: store)
+    monkeypatch.setattr("backend.api.agent.get_case_store", lambda: cases)
+    monkeypatch.setattr(
+        "backend.api.agent.build_resolve_agent",
+        lambda tool_activity=None: FakeAgent(),
+    )
+    first = client.post("/api/agent/chat", json={"message": "hello"})
+    session_id = first.json()["session_id"]
+    case_id = cases.create_case(
+        session_id,
+        title="Existing case",
+        category="refund",
+        description="Description",
+    )["id"]
+    second = client.post(
+        "/api/agent/chat",
+        json={"session_id": session_id, "message": "More details"},
+    )
+    assert second.status_code == 200
+    assert second.json()["case_id"] == case_id

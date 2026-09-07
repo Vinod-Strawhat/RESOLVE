@@ -40,6 +40,9 @@ database/uploads/
 # Phase 4 live-diagnostic scratch data
 database/resolve-live-case-*/
 
+# Phase 5 live-diagnostic scratch data
+database/resolve-live-action-*/
+
 # ---- Runtime notes (Phase 2 temporary storage) ----
 database/case_notes.json
 
