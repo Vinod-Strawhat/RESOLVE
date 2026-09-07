@@ -117,3 +117,127 @@ def test_list_cases(store):
     store.create_case("s1", title="A", category="warranty", description="D")
     store.create_case("s2", title="B", category="refund", description="D")
     assert len(store.list_cases()) == 2
+
+
+# --- Phase 6B: resolution state machine ---
+
+def test_entry_into_awaiting_response_from_free_status(store):
+    case_id = store.create_case("s1", title="A", category="warranty", description="D")["id"]
+    updated = store.transition_status(case_id, "awaiting_response")
+    assert updated["status"] == "awaiting_response"
+
+
+def test_transition_awaiting_response_to_response_received(store):
+    case_id = store.create_case("s1", title="A", category="warranty", description="D")["id"]
+    store.transition_status(case_id, "awaiting_response")
+    updated = store.transition_status(case_id, "response_received")
+    assert updated["status"] == "response_received"
+    assert updated["resolved_at"] is None
+
+
+def test_transition_response_received_to_resolved(store):
+    case_id = _response_received_case(store)
+    updated = store.transition_status(case_id, "resolved")
+    assert updated["status"] == "resolved"
+    assert updated["resolved_at"] is not None
+
+
+def test_transition_response_received_to_needs_follow_up(store):
+    case_id = _response_received_case(store)
+    updated = store.transition_status(case_id, "needs_follow_up")
+    assert updated["status"] == "needs_follow_up"
+
+
+def test_transition_response_received_to_human_intervention(store):
+    case_id = _response_received_case(store)
+    updated = store.transition_status(case_id, "human_intervention")
+    assert updated["status"] == "human_intervention"
+
+
+def test_transition_needs_follow_up_back_to_response_received(store):
+    case_id = _response_received_case(store)
+    store.transition_status(case_id, "needs_follow_up")
+    updated = store.transition_status(case_id, "response_received")
+    assert updated["status"] == "response_received"
+
+
+def test_transition_keeps_unrelated_case_fields(store):
+    case_id = store.create_case(
+        "s1", title="A", category="warranty", description="D"
+    )["id"]
+    store.update_case(
+        case_id,
+        {"product": "ASUS Vivobook", "seller": "Shop", "next_action": "send email"},
+    )
+    store.transition_status(case_id, "awaiting_response")
+    store.transition_status(case_id, "response_received")
+    updated = store.transition_status(case_id, "resolved")
+    assert updated["product"] == "ASUS Vivobook"
+    assert updated["seller"] == "Shop"
+    assert updated["next_action"] == "send email"
+    assert updated["title"] == "A"
+    assert updated["category"] == "warranty"
+
+
+def test_resolved_cannot_transition(store):
+    case_id = _response_received_case(store)
+    store.transition_status(case_id, "resolved")
+    with pytest.raises(ValueError, match="cannot transition"):
+        store.transition_status(case_id, "response_received")
+    with pytest.raises(ValueError, match="cannot transition"):
+        store.transition_status(case_id, "needs_follow_up")
+
+
+def test_human_intervention_cannot_transition_automatically(store):
+    case_id = _response_received_case(store)
+    store.transition_status(case_id, "human_intervention")
+    with pytest.raises(ValueError, match="cannot transition"):
+        store.transition_status(case_id, "response_received")
+    with pytest.raises(ValueError, match="cannot transition"):
+        store.transition_status(case_id, "resolved")
+
+
+def test_awaiting_response_to_resolved_rejected(store):
+    case_id = store.create_case("s1", title="A", category="warranty", description="D")["id"]
+    store.transition_status(case_id, "awaiting_response")
+    with pytest.raises(ValueError, match="cannot transition"):
+        store.transition_status(case_id, "resolved")
+
+
+def test_free_status_cannot_jump_into_machine(store):
+    case_id = store.create_case("s1", title="A", category="warranty", description="D")["id"]
+    with pytest.raises(ValueError, match="cannot transition"):
+        store.transition_status(case_id, "resolved")
+    with pytest.raises(ValueError, match="cannot transition"):
+        store.transition_status(case_id, "response_received")
+
+
+def test_transition_unknown_status(store):
+    case_id = store.create_case("s1", title="A", category="warranty", description="D")["id"]
+    with pytest.raises(ValueError, match="unknown case status"):
+        store.transition_status(case_id, "banana")
+
+
+def test_transition_unknown_case(store):
+    with pytest.raises(ValueError, match="not found"):
+        store.transition_status("missing", "awaiting_response")
+
+
+def test_update_case_rejects_resolution_statuses(store):
+    case_id = store.create_case("s1", title="A", category="warranty", description="D")["id"]
+    for status in ("awaiting_response", "response_received", "resolved", "needs_follow_up", "human_intervention"):
+        with pytest.raises(ValueError, match="resolution status changes"):
+            store.update_case(case_id, {"status": status})
+
+
+def test_update_case_still_allows_free_status(store):
+    case_id = store.create_case("s1", title="A", category="warranty", description="D")["id"]
+    updated = store.update_case(case_id, {"status": "in_progress"})
+    assert updated["status"] == "in_progress"
+
+
+def _response_received_case(store) -> str:
+    case_id = store.create_case("s1", title="A", category="warranty", description="D")["id"]
+    store.transition_status(case_id, "awaiting_response")
+    store.transition_status(case_id, "response_received")
+    return case_id

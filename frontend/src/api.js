@@ -66,3 +66,29 @@ export async function executeAction(actionId) {
     }),
   )
 }
+
+export async function recordResponse(caseId, body) {
+  return handle(
+    await fetch(`/api/cases/${encodeURIComponent(caseId)}/responses`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  )
+}
+
+export async function getResponses(caseId) {
+  return handle(
+    await fetch(`/api/cases/${encodeURIComponent(caseId)}/responses`),
+  )
+}
+
+export async function evaluateCase(caseId, outcome) {
+  return handle(
+    await fetch(`/api/cases/${encodeURIComponent(caseId)}/evaluate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ outcome }),
+    }),
+  )
+}

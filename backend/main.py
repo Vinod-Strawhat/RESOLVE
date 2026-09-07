@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.actions import router as actions_router
 from backend.api.agent import router as agent_router
+from backend.api.case_responses import router as case_responses_router
 from backend.api.cases import router as cases_router
 
 try:
@@ -24,6 +25,7 @@ app = FastAPI(
 
 app.include_router(agent_router)
 app.include_router(cases_router)
+app.include_router(case_responses_router)
 app.include_router(actions_router)
 
 cors_origins = [

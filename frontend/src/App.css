@@ -525,6 +525,137 @@
   border: 1px solid rgba(26, 127, 55, 0.35);
 }
 
+/* ---- Simulated response / resolution testing panel ---- */
+.response-testing-panel {
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  background: var(--code-bg);
+}
+
+.response-testing-panel .simulate-note {
+  font-size: 12px;
+  opacity: 0.7;
+  margin: 0;
+}
+
+.response-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.response-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.response-form input,
+.response-form textarea {
+  font: inherit;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-bg, #fff);
+  color: var(--text-h, #111);
+  resize: vertical;
+}
+
+.response-form button {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent-border, #1a6050);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.response-form button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.response-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.response-item {
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent-border);
+  border-radius: 0 6px 6px 0;
+  background: var(--panel-bg, #fff);
+}
+
+.response-content {
+  margin: 0 0 4px;
+  color: var(--text-h);
+  white-space: pre-wrap;
+}
+
+.response-meta {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.evaluate-buttons {
+  margin-top: 12px;
+}
+
+.evaluate-buttons .resolved {
+  background: #1a7f37;
+}
+
+.evaluate-buttons .needs-follow-up {
+  background: #a56a14;
+}
+
+.evaluate-buttons .human-intervention {
+  background: #8b4c90;
+}
+
+.status-label {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.status-label.status-awaiting_response {
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+}
+
+.status-label.status-response_received {
+  background: rgba(234, 179, 8, 0.14);
+  border: 1px solid rgba(234, 179, 8, 0.45);
+}
+
+.status-label.status-resolved {
+  background: rgba(26, 127, 55, 0.15);
+  border: 1px solid rgba(26, 127, 55, 0.4);
+}
+
+.status-label.status-needs_follow_up {
+  background: rgba(234, 179, 8, 0.14);
+  border: 1px solid rgba(234, 179, 8, 0.45);
+}
+
+.status-label.status-human_intervention {
+  background: rgba(139, 76, 144, 0.14);
+  border: 1px solid rgba(139, 76, 144, 0.45);
+}
+
 /* ---- Responsive ---- */
 @media (max-width: 900px) {
   .layout {

@@ -1,5 +1,14 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import ActionReview from './ActionReview.jsx'
+
+const STATUS_LABELS = {
+  awaiting_response: 'Awaiting response',
+  response_received: 'Response received',
+  resolved: 'Resolved',
+  needs_follow_up: 'Follow-up needed',
+  human_intervention: 'Human intervention required',
+  in_progress: 'In progress',
+}
 
 const CASE_FIELDS = [
   ['title', 'Title'],
@@ -41,10 +50,11 @@ function CaseDetails({ caseData }) {
           if (value === null || value === undefined || value === '') {
             return null
           }
+          const display = key === 'status' ? STATUS_LABELS[value] || value : String(value)
           return (
             <div className="case-field" key={key}>
               <dt>{label}</dt>
-              <dd>{String(value)}</dd>
+              <dd>{display}</dd>
             </div>
           )
         })}
@@ -119,16 +129,138 @@ function formatBytes(bytes) {
   return kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${kb.toFixed(0)} KB`
 }
 
+function ResponseTestingPanel({
+  caseData,
+  responses,
+  onRecordResponse,
+  onEvaluate,
+  responseBusy,
+  evaluateBusy,
+}) {
+  const [source, setSource] = useState('simulated_support')
+  const [content, setContent] = useState('')
+  const canRespond =
+    caseData &&
+    (caseData.status === 'awaiting_response' ||
+      caseData.status === 'needs_follow_up')
+  const canEvaluate = caseData && caseData.status === 'response_received'
+
+  if (!caseData) return null
+
+  return (
+    <div className="response-testing-panel">
+      <div className="panel-heading">
+        <h2>Resolution</h2>
+        <p className="simulate-note">Simulated / manual testing only.</p>
+      </div>
+
+      <dl className="case-fields">
+        <div className="case-field">
+          <dt>Case status</dt>
+          <dd className={`status-label status-${caseData.status || 'none'}`}>
+            {STATUS_LABELS[caseData.status] || caseData.status || 'New'}
+          </dd>
+        </div>
+      </dl>
+
+      <form
+        className="response-form"
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (content.trim()) onRecordResponse(source.trim(), content.trim())
+        }}
+      >
+        <label>
+          Source
+          <input
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            disabled={!canRespond || responseBusy}
+          />
+        </label>
+        <label>
+          Response text
+          <textarea
+            rows={3}
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            disabled={!canRespond || responseBusy}
+          />
+        </label>
+        <button type="submit" disabled={!canRespond || responseBusy || !content.trim()}>
+          {responseBusy ? 'Recording…' : 'Record simulated response'}
+        </button>
+      </form>
+
+      {!canRespond && (
+        <p className="empty-hint">
+          {caseData.status === 'resolved' || caseData.status === 'human_intervention'
+            ? `Case is ${STATUS_LABELS[caseData.status]}. No further actions available.`
+            : 'A response can be recorded once an action has been executed and the case is awaiting a response or needs a follow-up.'}
+        </p>
+      )}
+
+      {responses.length > 0 && (
+        <ul className="response-list">
+          {responses.map((r) => (
+            <li key={r.id} className="response-item">
+              <p className="response-content">{r.content}</p>
+              <span className="response-meta">
+                {r.source} · {new Date(r.received_at).toLocaleString()}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {canEvaluate && (
+        <div className="action-buttons evaluate-buttons">
+          <button
+            className="resolved"
+            onClick={() => onEvaluate('resolved')}
+            disabled={evaluateBusy}
+          >
+            Mark resolved
+          </button>
+          <button
+            className="needs-follow-up"
+            onClick={() => onEvaluate('needs_follow_up')}
+            disabled={evaluateBusy}
+          >
+            Needs follow-up
+          </button>
+          <button
+            className="human-intervention"
+            onClick={() => onEvaluate('human_intervention')}
+            disabled={evaluateBusy}
+          >
+            Human intervention
+          </button>
+        </div>
+      )}
+
+      {!canEvaluate && caseData.status === 'response_received' && (
+        <p className="empty-hint">Evaluate the latest response to continue.</p>
+      )}
+    </div>
+  )
+}
+
 function CasePanel({
   caseData,
   documents,
   actions,
+  responses,
   onUpload,
   onDecide,
   onExecute,
+  onRecordResponse,
+  onEvaluate,
   uploadBusy,
   decideBusy,
   executeBusy,
+  responseBusy,
+  evaluateBusy,
 }) {
   return (
     <div className="case-column">
@@ -144,6 +276,14 @@ function CasePanel({
         onExecute={onExecute}
         busy={decideBusy}
         executeBusy={executeBusy}
+      />
+      <ResponseTestingPanel
+        caseData={caseData}
+        responses={responses}
+        onRecordResponse={onRecordResponse}
+        onEvaluate={onEvaluate}
+        responseBusy={responseBusy}
+        evaluateBusy={evaluateBusy}
       />
     </div>
   )

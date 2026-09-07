@@ -7,6 +7,29 @@ from pathlib import Path
 
 from backend.services.memory_store import default_memory_db_path
 
+RESOLUTION_STATUSES = frozenset(
+    {
+        "awaiting_response",
+        "response_received",
+        "resolved",
+        "needs_follow_up",
+        "human_intervention",
+    }
+)
+
+EVALUATION_OUTCOMES = frozenset({"resolved", "needs_follow_up", "human_intervention"})
+
+# Resolution machine transitions (current status -> allowed next statuses).
+# The machine entry (awaiting_response) is reachable from any non-resolution
+# status; every other transition is explicit and enforced.
+_RESOLUTION_TRANSITIONS = {
+    "awaiting_response": {"response_received"},
+    "response_received": {"resolved", "needs_follow_up", "human_intervention"},
+    "needs_follow_up": {"response_received", "human_intervention"},
+    "resolved": set(),
+    "human_intervention": set(),
+}
+
 CASE_FIELDS = (
     "category",
     "title",
@@ -43,6 +66,7 @@ CREATE TABLE IF NOT EXISTS cases (
     warranty_expiry TEXT,
     rejection_reason TEXT,
     status TEXT,
+    resolved_at TEXT,
     next_action TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -74,6 +98,16 @@ class CaseStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+        self._ensure_resolved_column()
+
+    def _ensure_resolved_column(self) -> None:
+        """Migrate existing cases tables so the resolution timestamp exists."""
+        with self._connect() as conn:
+            existing = {
+                row["name"] for row in conn.execute("PRAGMA table_info(cases)")
+            }
+            if "resolved_at" not in existing:
+                conn.execute("ALTER TABLE cases ADD COLUMN resolved_at TEXT")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path, timeout=5.0)
@@ -94,6 +128,7 @@ class CaseStore:
         "warranty_expiry",
         "rejection_reason",
         "status",
+        "resolved_at",
         "next_action",
         "created_at",
         "updated_at",
@@ -183,6 +218,12 @@ class CaseStore:
         if invalid:
             raise ValueError(f"invalid case fields: {', '.join(sorted(invalid))}")
 
+        if "status" in updates and updates["status"].strip() in RESOLUTION_STATUSES:
+            raise ValueError(
+                f"cannot set status to {updates['status']!r} directly; "
+                "resolution status changes must go through the resolution state machine"
+            )
+
         for field, value in updates.items():
             if not value or not str(value).strip():
                 raise ValueError(f"value for {field!r} must not be empty")
@@ -198,6 +239,43 @@ class CaseStore:
                 f"UPDATE cases SET {columns}, updated_at = ? WHERE id = ?",
                 params,
             )
+        return self.get_case(case_id)
+
+    def transition_status(self, case_id: str, new_status: str) -> dict:
+        """Move a case through the resolution state machine.
+
+        The machine entry (``awaiting_response``) is reachable from any
+        non-resolution status. All other transitions are explicit and enforced;
+        ``resolved`` and ``human_intervention`` are terminal in this phase.
+        """
+        case = self.get_case(case_id)
+        if case is None:
+            raise ValueError(f"case not found: {case_id}")
+        if new_status not in RESOLUTION_STATUSES:
+            raise ValueError(f"unknown case status {new_status!r}")
+
+        current = case["status"]
+        if current == new_status:
+            return case
+
+        if new_status == "awaiting_response":
+            allowed = set() if current in RESOLUTION_STATUSES else {new_status}
+        else:
+            allowed = _RESOLUTION_TRANSITIONS.get(current, set())
+
+        if new_status not in allowed:
+            raise ValueError(
+                f"cannot transition case status from {current!r} to {new_status!r}"
+            )
+
+        now = _now()
+        values = {"status": new_status, "updated_at": now}
+        if new_status == "resolved":
+            values["resolved_at"] = now
+        columns = ", ".join(f"{field} = ?" for field in values)
+        params = tuple(values.values()) + (case_id,)
+        with self._connect() as conn:
+            conn.execute(f"UPDATE cases SET {columns} WHERE id = ?", params)
         return self.get_case(case_id)
 
     def list_cases(self) -> list[dict]:

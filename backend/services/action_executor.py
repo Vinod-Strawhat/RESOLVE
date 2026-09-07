@@ -80,9 +80,7 @@ class ActionExecutor:
             completed = self._store.complete_execution(
                 action_id, reference=reference, result=result
             )
-            self._cases.update_case(
-                action["case_id"], {"status": "awaiting_response"}
-            )
+            self._cases.transition_status(action["case_id"], "awaiting_response")
         except Exception as exc:
             error = str(exc) or exc.__class__.__name__
             try:

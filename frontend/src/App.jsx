@@ -2,10 +2,13 @@ import { useState } from 'react'
 import {
   ApiError,
   decideAction,
+  evaluateCase,
   executeAction,
   getActions,
   getCase,
+  getResponses,
   postChat,
+  recordResponse,
   uploadDocument,
 } from './api.js'
 import ChatPanel from './components/ChatPanel.jsx'
@@ -39,6 +42,9 @@ function App() {
   const [uploadBusy, setUploadBusy] = useState(false)
   const [decideBusy, setDecideBusy] = useState(false)
   const [executeBusy, setExecuteBusy] = useState(false)
+  const [responses, setResponses] = useState([])
+  const [responseBusy, setResponseBusy] = useState(false)
+  const [evaluateBusy, setEvaluateBusy] = useState(false)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
 
@@ -49,6 +55,9 @@ function App() {
 
     const actionsResponse = await getActions(id)
     setActions(actionsResponse.actions)
+
+    const responsesResponse = await getResponses(id)
+    setResponses(responsesResponse.responses)
   }
 
   async function startCase(problem) {
@@ -165,6 +174,42 @@ function App() {
     }
   }
 
+  async function handleRecordResponse(source, content) {
+    if (!caseId) return
+    setError(null)
+    setNotice(null)
+    setResponseBusy(true)
+    try {
+      const body = await recordResponse(caseId, { source, content })
+      setCaseData(body.case)
+      const responsesResponse = await getResponses(caseId)
+      setResponses(responsesResponse.responses)
+      setNotice(
+        `Simulated response recorded (${source}). Case status: ${body.case.status}.`,
+      )
+    } catch (err) {
+      setError(friendlyMessage(err))
+    } finally {
+      setResponseBusy(false)
+    }
+  }
+
+  async function handleEvaluate(outcome) {
+    if (!caseId) return
+    setError(null)
+    setNotice(null)
+    setEvaluateBusy(true)
+    try {
+      const body = await evaluateCase(caseId, outcome)
+      setCaseData(body.case)
+      setNotice(`Case marked: ${body.case.status}.`)
+    } catch (err) {
+      setError(friendlyMessage(err))
+    } finally {
+      setEvaluateBusy(false)
+    }
+  }
+
   function startOver() {
     setSessionId(null)
     setCaseId(null)
@@ -172,6 +217,7 @@ function App() {
     setCaseData(null)
     setDocuments([])
     setActions([])
+    setResponses([])
     setError(null)
     setNotice(null)
     setScreen('start')
@@ -211,9 +257,14 @@ function App() {
           onUpload={handleUpload}
           onDecide={handleDecide}
           onExecute={handleExecute}
+          onRecordResponse={handleRecordResponse}
+          onEvaluate={handleEvaluate}
+          responses={responses}
           uploadBusy={uploadBusy}
           decideBusy={decideBusy}
           executeBusy={executeBusy}
+          responseBusy={responseBusy}
+          evaluateBusy={evaluateBusy}
         />
       </div>
     </main>
