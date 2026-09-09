@@ -100,3 +100,17 @@ export async function evaluateResponseAI(caseId) {
     }),
   )
 }
+
+export async function getFollowupStatus(caseId) {
+  return handle(
+    await fetch(`/api/cases/${encodeURIComponent(caseId)}/followup-status`),
+  )
+}
+
+export async function prepareFollowup(caseId) {
+  return handle(
+    await fetch(`/api/cases/${encodeURIComponent(caseId)}/prepare-followup`, {
+      method: 'POST',
+    }),
+  )
+}

@@ -7,8 +7,10 @@ import {
   executeAction,
   getActions,
   getCase,
+  getFollowupStatus,
   getResponses,
   postChat,
+  prepareFollowup,
   recordResponse,
   uploadDocument,
 } from './api.js'
@@ -48,6 +50,8 @@ function App() {
   const [evaluateBusy, setEvaluateBusy] = useState(false)
   const [aiEvaluateBusy, setAiEvaluateBusy] = useState(false)
   const [aiEvaluation, setAiEvaluation] = useState(null)
+  const [followupStatus, setFollowupStatus] = useState(null)
+  const [prepareFollowupBusy, setPrepareFollowupBusy] = useState(false)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
 
@@ -61,6 +65,9 @@ function App() {
 
     const responsesResponse = await getResponses(id)
     setResponses(responsesResponse.responses)
+
+    const followupResponse = await getFollowupStatus(id)
+    setFollowupStatus(followupResponse)
   }
 
   async function startCase(problem) {
@@ -222,12 +229,32 @@ function App() {
     try {
       const body = await evaluateResponseAI(caseId)
       setAiEvaluation(body.evaluation)
-      setCaseData(body.case)
-      setNotice(`AI evaluation applied: ${body.evaluation.outcome}.`)
+      await refreshCaseData(caseId)
+      setNotice(
+        body.followup && body.followup.overflowed_to_human_intervention
+          ? 'Maximum follow-up attempts reached. Human intervention required.'
+          : `AI evaluation applied: ${body.evaluation.outcome}.`,
+      )
     } catch (err) {
       setError(friendlyMessage(err))
     } finally {
       setAiEvaluateBusy(false)
+    }
+  }
+
+  async function handlePrepareFollowup() {
+    if (!caseId) return
+    setError(null)
+    setNotice(null)
+    setPrepareFollowupBusy(true)
+    try {
+      await prepareFollowup(caseId)
+      await refreshCaseData(caseId)
+      setNotice('Follow-up action prepared and awaiting approval.')
+    } catch (err) {
+      setError(friendlyMessage(err))
+    } finally {
+      setPrepareFollowupBusy(false)
     }
   }
 
@@ -240,6 +267,7 @@ function App() {
     setActions([])
     setResponses([])
     setAiEvaluation(null)
+    setFollowupStatus(null)
     setError(null)
     setNotice(null)
     setScreen('start')
@@ -282,6 +310,7 @@ function App() {
           onRecordResponse={handleRecordResponse}
           onEvaluate={handleEvaluate}
           onEvaluateAI={handleEvaluateAI}
+          onPrepareFollowup={handlePrepareFollowup}
           responses={responses}
           uploadBusy={uploadBusy}
           decideBusy={decideBusy}
@@ -290,6 +319,8 @@ function App() {
           evaluateBusy={evaluateBusy}
           aiEvaluateBusy={aiEvaluateBusy}
           aiEvaluation={aiEvaluation}
+          followupStatus={followupStatus}
+          prepareFollowupBusy={prepareFollowupBusy}
         />
       </div>
     </main>

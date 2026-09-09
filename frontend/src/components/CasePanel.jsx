@@ -135,10 +135,13 @@ function ResponseTestingPanel({
   onRecordResponse,
   onEvaluate,
   onEvaluateAI,
+  onPrepareFollowup,
   responseBusy,
   evaluateBusy,
   aiEvaluateBusy,
   aiEvaluation,
+  followupStatus,
+  prepareFollowupBusy,
 }) {
   const [source, setSource] = useState('simulated_support')
   const [content, setContent] = useState('')
@@ -147,6 +150,8 @@ function ResponseTestingPanel({
     (caseData.status === 'awaiting_response' ||
       caseData.status === 'needs_follow_up')
   const canEvaluate = caseData && caseData.status === 'response_received'
+  const followupCount = followupStatus ? followupStatus.followup_count : 0
+  const maxFollowups = followupStatus ? followupStatus.max_followups : 3
 
   if (!caseData) return null
 
@@ -188,6 +193,8 @@ function ResponseTestingPanel({
             value={content}
             onChange={(e) => setContent(e.target.value)}
             disabled={!canRespond || responseBusy}
+            aria-label="Response text"
+            placeholder="Enter the company's simulated response"
           />
         </label>
         <button type="submit" disabled={!canRespond || responseBusy || !content.trim()}>
@@ -214,6 +221,49 @@ function ResponseTestingPanel({
             </li>
           ))}
         </ul>
+      )}
+
+      {caseData.status === 'needs_follow_up' && (
+        <div className="followup-section">
+          <h3>Follow-up required</h3>
+          <p className="simulate-note">
+            Follow-up attempt: {followupCount} / {maxFollowups}
+          </p>
+          {followupStatus && followupStatus.can_prepare_action ? (
+            <button
+              className="followup-button"
+              onClick={onPrepareFollowup}
+              disabled={prepareFollowupBusy}
+            >
+              {prepareFollowupBusy
+                ? 'Preparing follow-up…'
+                : 'Prepare Follow-up Action'}
+            </button>
+          ) : (
+            <p className="empty-hint">
+              {followupCount >= maxFollowups
+                ? 'Maximum follow-up attempts reached. Human intervention required.'
+                : 'An AI follow-up action is already being prepared or awaiting approval.'}
+            </p>
+          )}
+        </div>
+      )}
+
+      {caseData.status === 'human_intervention' && (
+        <div className="human-intervention-box">
+          <h3>Human intervention required</h3>
+          <p>
+            RESOLVE cannot safely continue this case automatically. A human
+            should review the case history and take over.
+          </p>
+        </div>
+      )}
+
+      {caseData.status === 'resolved' && (
+        <div className="resolved-box">
+          <h3>Resolved</h3>
+          <p>This case has been resolved. No further actions are available.</p>
+        </div>
       )}
 
       {canEvaluate && (
@@ -301,6 +351,7 @@ function CasePanel({
   onRecordResponse,
   onEvaluate,
   onEvaluateAI,
+  onPrepareFollowup,
   uploadBusy,
   decideBusy,
   executeBusy,
@@ -308,6 +359,8 @@ function CasePanel({
   evaluateBusy,
   aiEvaluateBusy,
   aiEvaluation,
+  followupStatus,
+  prepareFollowupBusy,
 }) {
   return (
     <div className="case-column">
@@ -330,10 +383,13 @@ function CasePanel({
         onRecordResponse={onRecordResponse}
         onEvaluate={onEvaluate}
         onEvaluateAI={onEvaluateAI}
+        onPrepareFollowup={onPrepareFollowup}
         responseBusy={responseBusy}
         evaluateBusy={evaluateBusy}
         aiEvaluateBusy={aiEvaluateBusy}
         aiEvaluation={aiEvaluation}
+        followupStatus={followupStatus}
+        prepareFollowupBusy={prepareFollowupBusy}
       />
     </div>
   )

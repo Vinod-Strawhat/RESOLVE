@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from backend.main import app
 from backend.services.case_store import CaseStore
+from backend.services.followup_store import FollowupStore
 from backend.services.response_evaluator import EvaluationOutcome
 from backend.services.response_store import ResponseStore
 
@@ -11,9 +12,13 @@ from backend.services.response_store import ResponseStore
 def env(tmp_path, monkeypatch):
     case_store = CaseStore(tmp_path / "resolve.db")
     response_store = ResponseStore(tmp_path / "resolve.db")
+    followup_store = FollowupStore(tmp_path / "resolve.db")
     monkeypatch.setattr("backend.api.case_responses.get_case_store", lambda: case_store)
     monkeypatch.setattr(
         "backend.api.case_responses.get_response_store", lambda: response_store
+    )
+    monkeypatch.setattr(
+        "backend.api.case_responses.get_followup_store", lambda: followup_store
     )
 
     case_id = case_store.create_case(
@@ -26,6 +31,7 @@ def env(tmp_path, monkeypatch):
         "case_id": case_id,
         "case_store": case_store,
         "response_store": response_store,
+        "followup_store": followup_store,
     }
     env["client"] = TestClient(app)
     return env

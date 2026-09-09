@@ -161,6 +161,21 @@ def test_transition_needs_follow_up_back_to_response_received(store):
     assert updated["status"] == "response_received"
 
 
+def test_transition_needs_follow_up_to_awaiting_response(store):
+    case_id = _response_received_case(store)
+    store.transition_status(case_id, "needs_follow_up")
+    updated = store.transition_status(case_id, "awaiting_response")
+    assert updated["status"] == "awaiting_response"
+
+
+def test_awaiting_response_cannot_transition_to_awaiting_response_after_resolution(store):
+    case_id = _response_received_case(store)
+    store.transition_status(case_id, "needs_follow_up")
+    store.transition_status(case_id, "awaiting_response")
+    with pytest.raises(ValueError, match="cannot transition"):
+        store.transition_status(case_id, "needs_follow_up")
+
+
 def test_transition_keeps_unrelated_case_fields(store):
     case_id = store.create_case(
         "s1", title="A", category="warranty", description="D"

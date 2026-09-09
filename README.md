@@ -22,10 +22,11 @@ refund, or a warranty claim that a company refused - RESOLVE will eventually:
 9. Wait, remember the case, and follow up when appropriate.
 10. Continue until the case is resolved or human intervention is required.
 
-> **Status: early foundation phase.** Phases 1-4 are implemented: Strands agent
-> tool-calling loop, persistent conversation memory, structured case records,
-> and document ingestion with extraction + model analysis. Email, approvals, and
-> autonomous follow-ups are not implemented yet.
+> **Status: early foundation phase.** Phases 5-6C are implemented: a
+> human-approval workflow with simulated action execution, AI response
+> evaluation, and an automatic follow-up loop (up to 3 follow-up attempts per
+> case, then human intervention). Real email and other external integrations are
+> not implemented yet; execution is simulated with a reference number.
 
 ## Conversation memory (Phase 3)
 
@@ -142,6 +143,51 @@ Content-Type: multipart/form-data
 No OCR is performed: scanned/image-only PDFs are stored but reported as having
 no readable text.
 
+## Approvals, simulated execution & evaluation (Phases 5-6B)
+
+Actions are created in `pending_approval` status and are never executed without
+explicit human approval.
+
+```http
+POST /api/cases/{case_id}/actions          # create a pending action
+POST /api/actions/{action_id}/approve      # approve (required before execution)
+POST /api/actions/{action_id}/reject       # discard
+POST /api/actions/{action_id}/execute      # simulated execution (requires approval)
+POST /api/cases/{case_id}/evaluate-response  # AI response evaluation
+POST /api/cases/{case_id}/evaluate           # deterministic manual evaluation
+```
+
+- `execute` is simulated: it records a `RESOLVE-ACTION-*` reference number and
+  a result and always succeeds; no external side effects.
+- Execution of an action moves the case to `awaiting_response`.
+- A company response can then be recorded and evaluated.
+
+## Automatic follow-up loop (Phase 6C)
+
+When an AI evaluation decides the case still needs follow-up (status
+`needs_follow_up`), RESOLVE can continue working toward resolution in a
+repeatable loop:
+
+1. **Prepare:** `POST /api/cases/{case_id}/prepare-followup` asks the follow-up
+   planner (a read-only Strands agent) to suggest the next concrete action.
+2. **Approve:** the suggestion is stored as a `pending_approval` action and
+   shown in the UI; a human must approve it (execution is never automatic).
+3. **Execute:** approving runs the same simulated executor, moving the case back
+   to `awaiting_response`.
+4. **Evaluate:** recording the next company response and running the AI
+   evaluator again can either resolve the case, keep looping, or flag it for
+   human intervention.
+
+- The backend enforces a **maximum of 3 follow-up attempts per case**
+  (configurable via the `MAX_FOLLOWUPS` environment variable). When the limit
+  is reached, the next `needs_follow_up` evaluation forces
+  `human_intervention` and no further follow-up actions are prepared.
+- The follow-up planner is strictly read-only: it never modifies case state and
+  never creates or executes actions; the server records every attempt in a
+  dedicated `followup_attempts` table.
+- `GET /api/cases/{case_id}/followup-status` reports the current attempt count
+  and whether another follow-up action is still allowed.
+
 ## Current MVP scope
 
 The MVP deliberately targets a narrow domain:
@@ -223,7 +269,20 @@ API keys.
   and `update_case` tools, active-case injection into chat) and document
   ingestion (safe `.txt`/`.md`/`.pdf` upload, `pypdf` text extraction, and
   Strands-based document analysis against the case record).
+- **Phase 5 (done):** actions & approvals - SQLite `actions` table, action
+  CRUD, and an explicit approve/reject workflow. No action executes without
+  human approval.
+- **Phase 6A (done):** simulated execution - `execute` runs without external
+  side effects, records a `RESOLVE-ACTION-*` reference, and moves the case to
+  `awaiting_response`.
+- **Phase 6B (done):** response evaluation - record company responses
+  (`POST /api/cases/{case_id}/responses`), deterministic manual evaluation, and
+  an AI evaluator (`POST /api/cases/{case_id}/evaluate-response`) that returns
+  `resolved`, `needs_follow_up`, or `human_intervention`.
+- **Phase 6C (done):** automatic follow-up loop - read-only AI follow-up
+  planner, backend-enforced maximum of 3 follow-up attempts (configurable via
+  `MAX_FOLLOWUPS`), preparation + approval + simulated execution + re-evaluation
+  cycle, and forced `human_intervention` once the limit is reached.
 
-Automated follow-ups, approval workflows, email, and any AgentCore/AWS
-deployment belong to **later phases** and are deliberately not implemented yet. 
-No OCR is performed on scanned documents.
+Email, and any AgentCore/AWS deployment belong to **later phases** and are
+deliberately not implemented yet. No OCR is performed on scanned documents.

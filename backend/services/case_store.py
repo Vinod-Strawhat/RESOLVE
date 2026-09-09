@@ -25,7 +25,7 @@ EVALUATION_OUTCOMES = frozenset({"resolved", "needs_follow_up", "human_intervent
 _RESOLUTION_TRANSITIONS = {
     "awaiting_response": {"response_received"},
     "response_received": {"resolved", "needs_follow_up", "human_intervention"},
-    "needs_follow_up": {"response_received", "human_intervention"},
+    "needs_follow_up": {"response_received", "human_intervention", "awaiting_response"},
     "resolved": set(),
     "human_intervention": set(),
 }
@@ -244,9 +244,10 @@ class CaseStore:
     def transition_status(self, case_id: str, new_status: str) -> dict:
         """Move a case through the resolution state machine.
 
-        The machine entry (``awaiting_response``) is reachable from any
-        non-resolution status. All other transitions are explicit and enforced;
-        ``resolved`` and ``human_intervention`` are terminal in this phase.
+        ``awaiting_response`` is reachable from any non-resolution status
+        *and* from ``needs_follow_up`` (follow-up action execution).  All
+        other transitions are explicit and enforced; ``resolved`` and
+        ``human_intervention`` are terminal in this phase.
         """
         case = self.get_case(case_id)
         if case is None:
@@ -259,7 +260,12 @@ class CaseStore:
             return case
 
         if new_status == "awaiting_response":
-            allowed = set() if current in RESOLUTION_STATUSES else {new_status}
+            if current == "needs_follow_up":
+                allowed = {new_status}
+            elif current in RESOLUTION_STATUSES:
+                allowed = set()
+            else:
+                allowed = {new_status}
         else:
             allowed = _RESOLUTION_TRANSITIONS.get(current, set())
 
