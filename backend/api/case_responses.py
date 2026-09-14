@@ -8,6 +8,7 @@ from backend.services.case_store import (
     get_case_store,
 )
 from backend.services.action_store import get_action_store
+from backend.services.evaluation_store import get_evaluation_store
 from backend.services.followup_preparer import (
     PreparedActionResult,
     prepare_followup_action,
@@ -34,6 +35,9 @@ class RecordResponseRequest(BaseModel):
 
 class EvaluateRequest(BaseModel):
     outcome: str
+    confidence: float = 0.0
+    reason: str = ""
+    next_step: str = ""
 
 
 def _case_or_404(case_id: str) -> dict:
@@ -76,6 +80,13 @@ def list_responses(case_id: str) -> dict:
     return {"case_id": case_id, "responses": responses}
 
 
+@router.get("/{case_id}/evaluations")
+def list_evaluations(case_id: str) -> dict:
+    _case_or_404(case_id)
+    evaluations = get_evaluation_store().list_evaluations_for_case(case_id)
+    return {"case_id": case_id, "evaluations": evaluations}
+
+
 @router.post("/{case_id}/evaluate")
 def evaluate_case(case_id: str, request: EvaluateRequest) -> dict:
     outcome = (request.outcome or "").strip()
@@ -97,6 +108,22 @@ def evaluate_case(case_id: str, request: EvaluateRequest) -> dict:
                 "must be response_received"
             ),
         )
+
+    try:
+        get_evaluation_store().record_evaluation(
+            case_id,
+            outcome=outcome,
+            source="manual",
+            confidence=request.confidence,
+            reason=(request.reason or "").strip(),
+            next_step=(request.next_step or "").strip(),
+        )
+    except Exception as exc:
+        logger.exception("failed to persist manual evaluation")
+        raise HTTPException(
+            status_code=500,
+            detail="failed to persist evaluation record",
+        ) from exc
 
     updated = get_case_store().transition_status(case_id, outcome)
     return {"case": updated}
@@ -141,6 +168,22 @@ def evaluate_response_ai(case_id: str) -> dict:
         raise HTTPException(
             status_code=500,
             detail="evaluation service error",
+        ) from exc
+
+    try:
+        get_evaluation_store().record_evaluation(
+            case_id,
+            outcome=result.outcome,
+            source="ai",
+            confidence=result.confidence,
+            reason=result.reason,
+            next_step=result.next_step,
+        )
+    except Exception as exc:
+        logger.exception("failed to persist ai evaluation")
+        raise HTTPException(
+            status_code=500,
+            detail="failed to persist evaluation record",
         ) from exc
 
     outcome = result.outcome
@@ -197,7 +240,7 @@ def followup_status(case_id: str) -> dict:
         "followup_count": count,
         "max_followups": max_followups,
         "can_prepare_action": case["status"] == "needs_follow_up"
-        and count < max_followups,
+        and count <= max_followups,
         "attempts": followup_store.get_followup_history(case_id),
     }
 

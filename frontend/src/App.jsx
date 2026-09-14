@@ -9,6 +9,7 @@ import {
   getCase,
   getExecutionConfig,
   getFollowupStatus,
+  getHistory,
   getResponses,
   postChat,
   prepareFollowup,
@@ -52,6 +53,9 @@ function App() {
   const [aiEvaluateBusy, setAiEvaluateBusy] = useState(false)
   const [aiEvaluation, setAiEvaluation] = useState(null)
   const [followupStatus, setFollowupStatus] = useState(null)
+  const [history, setHistory] = useState([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState(null)
   const [prepareFollowupBusy, setPrepareFollowupBusy] = useState(false)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
@@ -81,6 +85,23 @@ function App() {
 
     const followupResponse = await getFollowupStatus(id)
     setFollowupStatus(followupResponse)
+
+    await refreshHistory(id)
+  }
+
+  async function refreshHistory(id) {
+    if (!id) return
+    setHistoryLoading(true)
+    setHistoryError(null)
+    try {
+      const body = await getHistory(id)
+      setHistory(body.events)
+    } catch {
+      setHistory([])
+      setHistoryError('Could not load the case history.')
+    } finally {
+      setHistoryLoading(false)
+    }
   }
 
   async function startCase(problem) {
@@ -169,6 +190,7 @@ function App() {
           ? 'Action approved — ready for execution.'
           : 'Action rejected.',
       )
+      if (caseId) await refreshHistory(caseId)
     } catch (err) {
       setError(friendlyMessage(err))
     } finally {
@@ -190,6 +212,7 @@ function App() {
         setCaseData(caseResponse.case)
       }
       setNotice('Action executed.')
+      if (caseId) await refreshHistory(caseId)
     } catch (err) {
       setError(friendlyMessage(err))
     } finally {
@@ -210,6 +233,7 @@ function App() {
       setNotice(
         `Simulated response recorded (${source}). Case status: ${body.case.status}.`,
       )
+      await refreshHistory(caseId)
     } catch (err) {
       setError(friendlyMessage(err))
     } finally {
@@ -226,6 +250,7 @@ function App() {
       const body = await evaluateCase(caseId, outcome)
       setCaseData(body.case)
       setNotice(`Case marked: ${body.case.status}.`)
+      await refreshHistory(caseId)
     } catch (err) {
       setError(friendlyMessage(err))
     } finally {
@@ -281,6 +306,9 @@ function App() {
     setResponses([])
     setAiEvaluation(null)
     setFollowupStatus(null)
+    setHistory([])
+    setHistoryLoading(false)
+    setHistoryError(null)
     setError(null)
     setNotice(null)
     setScreen('start')
@@ -335,6 +363,10 @@ function App() {
           followupStatus={followupStatus}
           prepareFollowupBusy={prepareFollowupBusy}
           executionConfig={executionConfig}
+          history={history}
+          historyLoading={historyLoading}
+          historyError={historyError}
+          onRetryHistory={refreshHistory}
         />
       </div>
     </main>

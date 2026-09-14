@@ -107,6 +107,12 @@ export async function getFollowupStatus(caseId) {
   )
 }
 
+export async function getHistory(caseId) {
+  return handle(
+    await fetch(`/api/cases/${encodeURIComponent(caseId)}/history`),
+  )
+}
+
 export async function prepareFollowup(caseId) {
   return handle(
     await fetch(`/api/cases/${encodeURIComponent(caseId)}/prepare-followup`, {

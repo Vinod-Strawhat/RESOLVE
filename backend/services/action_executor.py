@@ -13,6 +13,7 @@ lifecycle.
 compatibility (it now lives in :mod:`backend.channels.simulated`).
 """
 
+import logging
 import threading
 from dataclasses import dataclass
 
@@ -24,6 +25,8 @@ from backend.services.case_store import get_case_store
 
 # Backward-compatible alias: previously defined in this module.
 SimulatedExecutionChannel = _Simulated
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -75,23 +78,68 @@ class ActionExecutor:
 
         channel_name = self.channel_name
         self._store.begin_execution(action_id, channel_name=channel_name)
+
         try:
             submission = self._channel.submit(action)
-            if isinstance(submission, ChannelResult):
-                reference, result = submission.reference, submission.result
-            else:
-                reference, result = submission
-            completed = self._store.complete_execution(
-                action_id, reference=reference, result=result
-            )
-            self._cases.transition_status(action["case_id"], "awaiting_response")
         except Exception as exc:
+            # Delivery never happened; recording the action as failed is safe
+            # because a retry cannot double-send.
             error = str(exc) or exc.__class__.__name__
             try:
                 self._store.fail_execution(action_id, error=error)
             except ValueError:
                 pass
             return ExecutionOutcome(status="failed", error=error, channel=channel_name)
+
+        if isinstance(submission, ChannelResult):
+            reference, result = submission.reference, submission.result
+        else:
+            reference, result = submission
+
+        try:
+            completed = self._store.complete_execution(
+                action_id, reference=reference, result=result
+            )
+        except Exception as exc:
+            # The action was already delivered by the channel. Marking it
+            # failed would invite a duplicate send on retry, so the persistence
+            # problem is surfaced distinctly instead of as a delivery failure.
+            error = str(exc) or exc.__class__.__name__
+            logger.exception(
+                "action %s was delivered (%s) but its execution record could "
+                "not be persisted: %s",
+                action_id,
+                channel_name,
+                error,
+            )
+            return ExecutionOutcome(
+                status="delivered",
+                reference=reference,
+                result=result,
+                error=f"execution record not persisted: {error}",
+                channel=channel_name,
+            )
+
+        try:
+            self._cases.transition_status(action["case_id"], "awaiting_response")
+        except Exception as exc:
+            # The action executed and is recorded; only the case update failed.
+            # The action must not be reported as failed (it was delivered).
+            error = str(exc) or exc.__class__.__name__
+            logger.exception(
+                "action %s executed but its case transition to awaiting_response "
+                "failed: %s",
+                action_id,
+                error,
+            )
+            return ExecutionOutcome(
+                status="executed",
+                reference=reference,
+                result=result,
+                executed_at=completed["executed_at"],
+                channel=channel_name,
+                error=f"case status not updated: {error}",
+            )
 
         return ExecutionOutcome(
             status="executed",

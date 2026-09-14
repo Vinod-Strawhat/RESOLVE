@@ -118,7 +118,9 @@
 .chat-panel,
 .case-panel,
 .evidence-panel,
-.action-review {
+.action-review,
+.response-testing-panel,
+.history-panel {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 16px;
@@ -727,6 +729,13 @@
   color: var(--text-h);
 }
 
+.followup-note {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--text);
+  opacity: 0.85;
+}
+
 .followup-button {
   margin-top: 8px;
   padding: 8px 16px;
@@ -737,6 +746,12 @@
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
+}
+
+.followup-button-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  opacity: 0.65;
 }
 
 .followup-button:hover {
@@ -907,6 +922,160 @@
   text-transform: uppercase;
   letter-spacing: 0.06em;
   opacity: 0.6;
+}
+
+.ai-evaluation-result .eval-field .eval-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  opacity: 0.65;
+}
+
+/* ---- Resolution timeline (Phase 7C) ---- */
+.history-error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+}
+
+.history-error .error {
+  margin: 0;
+}
+
+.retry-button {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.retry-button:hover {
+  color: var(--text-h);
+  border-color: var(--accent-border);
+}
+
+.timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  position: relative;
+}
+
+.timeline-event {
+  display: flex;
+  gap: 12px;
+}
+
+.timeline-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--border);
+  border: 2px solid var(--bg);
+}
+
+.timeline-event-case_created .timeline-dot {
+  background: var(--accent);
+}
+
+.timeline-event-case_resolved .timeline-dot {
+  background: #2e7d32;
+}
+
+.timeline-event-response .timeline-dot {
+  background: #1565c0;
+}
+
+.timeline-event-evaluation .timeline-dot {
+  background: #6a1b9a;
+}
+
+.timeline-event-action .timeline-dot {
+  background: #bf6b08;
+}
+
+.timeline-event-followup .timeline-dot {
+  background: #455a64;
+}
+
+.timeline-card {
+  flex: 1;
+  min-width: 0;
+}
+
+.timeline-heading h3 {
+  margin: 0 0 2px;
+  font-size: 14px;
+  color: var(--text-h);
+}
+
+.timeline-meta {
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+.timeline-badges {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 6px 0 0;
+  flex-wrap: wrap;
+}
+
+.timeline-source {
+  font-size: 12px;
+  opacity: 0.65;
+  text-transform: lowercase;
+}
+
+.timeline-body {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.timeline-body .timeline-detail-row {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  align-items: baseline;
+}
+
+.timeline-body dt {
+  flex: 0 0 78px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.6;
+}
+
+.timeline-body dd {
+  margin: 0;
+  color: var(--text-h);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.timeline-text {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.timeline-event .status,
+.timeline-event .eval-outcome {
+  font-size: 12px;
+  padding: 2px 8px;
 }
 
 /* ---- Responsive ---- */

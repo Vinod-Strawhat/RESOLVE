@@ -16,12 +16,16 @@ def _new_stores(tmp_path):
     response_store = ResponseStore(db)
     from backend.services.followup_store import FollowupStore
     followup_store = FollowupStore(db)
-    return case_store, action_store, response_store, followup_store
+    from backend.services.evaluation_store import EvaluationStore
+    evaluation_store = EvaluationStore(db)
+    return case_store, action_store, response_store, followup_store, evaluation_store
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    case_store, action_store, response_store, followup_store = _new_stores(tmp_path)
+    case_store, action_store, response_store, followup_store, evaluation_store = (
+        _new_stores(tmp_path)
+    )
 
     def _patch():
         monkeypatch.setattr("backend.api.case_responses.get_case_store", lambda: case_store)
@@ -29,6 +33,9 @@ def env(tmp_path, monkeypatch):
         monkeypatch.setattr("backend.api.case_responses.get_action_store", lambda: action_store)
         monkeypatch.setattr(
             "backend.api.case_responses.get_followup_store", lambda: followup_store
+        )
+        monkeypatch.setattr(
+            "backend.api.case_responses.get_evaluation_store", lambda: evaluation_store
         )
         monkeypatch.setattr(
             "backend.api.actions.get_case_store", lambda: case_store
@@ -55,6 +62,7 @@ def env(tmp_path, monkeypatch):
         "action_store": action_store,
         "response_store": response_store,
         "followup_store": followup_store,
+        "evaluation_store": evaluation_store,
     }
     env["client"] = TestClient(app)
     return env
@@ -272,6 +280,55 @@ def test_after_max_attempts_no_more_preparation(env, monkeypatch):
     _patch_preparer(monkeypatch)
     env["client"].post(f"/api/cases/{env['case_id']}/evaluate-response")
     assert env["case_store"].get_case(env["case_id"])["status"] == "human_intervention"
+    prep = env["client"].post(
+        f"/api/cases/{env['case_id']}/prepare-followup"
+    )
+    assert prep.status_code == 409
+
+
+def test_can_prepare_action_true_at_exactly_max(env, monkeypatch):
+    """After the max-th attempt is recorded the case still needs its action."""
+    _to_response_received(env)
+    for _ in range(2):
+        _drive_full_followup_cycle(env, monkeypatch)
+    assert env["followup_store"].get_followup_count(env["case_id"]) == 2
+    assert env["case_store"].get_case(env["case_id"])["status"] == "response_received"
+
+    _patch_ai_evaluator(monkeypatch, "needs_follow_up")
+    eval_resp = env["client"].post(
+        f"/api/cases/{env['case_id']}/evaluate-response"
+    )
+    assert eval_resp.status_code == 200
+    assert eval_resp.json()["followup"]["count"] == 3
+    assert env["case_store"].get_case(env["case_id"])["status"] == "needs_follow_up"
+
+    status = env["client"].get(
+        f"/api/cases/{env['case_id']}/followup-status"
+    ).json()
+    assert status["followup_count"] == 3
+    assert status["can_prepare_action"] is True
+
+    _patch_preparer(monkeypatch)
+    prep = env["client"].post(
+        f"/api/cases/{env['case_id']}/prepare-followup"
+    )
+    assert prep.status_code == 200
+    assert prep.json()["action"]["status"] == "pending_approval"
+
+
+def test_can_prepare_action_false_after_overflow(env, monkeypatch):
+    _to_response_received(env)
+    for _ in range(3):
+        _drive_full_followup_cycle(env, monkeypatch)
+    _patch_ai_evaluator(monkeypatch, "needs_follow_up")
+    _patch_preparer(monkeypatch)
+    env["client"].post(f"/api/cases/{env['case_id']}/evaluate-response")
+    assert env["case_store"].get_case(env["case_id"])["status"] == "human_intervention"
+
+    status = env["client"].get(
+        f"/api/cases/{env['case_id']}/followup-status"
+    ).json()
+    assert status["can_prepare_action"] is False
     prep = env["client"].post(
         f"/api/cases/{env['case_id']}/prepare-followup"
     )

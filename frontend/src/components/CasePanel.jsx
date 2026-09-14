@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import ActionReview from './ActionReview.jsx'
+import HistoryTimeline from './HistoryTimeline.jsx'
 
 const STATUS_LABELS = {
   awaiting_response: 'Awaiting response',
@@ -225,7 +226,12 @@ function ResponseTestingPanel({
 
       {caseData.status === 'needs_follow_up' && (
         <div className="followup-section">
-          <h3>Follow-up required</h3>
+          <h3>Follow-up needed — AI recommendation</h3>
+          <p className="followup-note">
+            The AI has not marked this case as resolved yet: the company may
+            have approved an outcome, but the real-world result (for example,
+            inspection or repair) is still pending.
+          </p>
           <p className="simulate-note">
             Follow-up attempt: {followupCount} / {maxFollowups}
           </p>
@@ -244,6 +250,12 @@ function ResponseTestingPanel({
               {followupCount >= maxFollowups
                 ? 'Maximum follow-up attempts reached. Human intervention required.'
                 : 'An AI follow-up action is already being prepared or awaiting approval.'}
+            </p>
+          )}
+          {followupStatus && followupStatus.can_prepare_action && (
+            <p className="followup-button-hint">
+              Prepares an automatic follow-up message to the company — separate
+              from the AI&apos;s recommended real-world next step for you.
             </p>
           )}
         </div>
@@ -327,8 +339,12 @@ function ResponseTestingPanel({
             <dd>{aiEvaluation.reason}</dd>
           </div>
           <div className="eval-field">
-            <dt>Next step</dt>
+            <dt>AI recommended next step</dt>
             <dd>{aiEvaluation.next_step}</dd>
+            <p className="eval-hint">
+              For you to take in the real world — RESOLVE does not perform this
+              automatically.
+            </p>
           </div>
         </div>
       )}
@@ -362,6 +378,10 @@ function CasePanel({
   followupStatus,
   prepareFollowupBusy,
   executionConfig,
+  history,
+  historyLoading,
+  historyError,
+  onRetryHistory,
 }) {
   return (
     <div className="case-column">
@@ -392,6 +412,12 @@ function CasePanel({
         aiEvaluation={aiEvaluation}
         followupStatus={followupStatus}
         prepareFollowupBusy={prepareFollowupBusy}
+      />
+      <HistoryTimeline
+        events={history}
+        loading={historyLoading}
+        error={historyError}
+        onRetry={onRetryHistory}
       />
     </div>
   )

@@ -145,23 +145,29 @@ Content-Type: multipart/form-data
 No OCR is performed: scanned/image-only PDFs are stored but reported as having
 no readable text.
 
-## Approvals, simulated execution & evaluation (Phases 5-6B)
+## Approvals, execution & evaluation (Phases 5-7A)
 
 Actions are created in `pending_approval` status and are never executed without
 explicit human approval.
 
 ```http
-POST /api/cases/{case_id}/actions          # create a pending action
+POST /api/cases/{case_id}/prepare-followup  # AI proposes a pending_approval action
 POST /api/actions/{action_id}/approve      # approve (required before execution)
 POST /api/actions/{action_id}/reject       # discard
-POST /api/actions/{action_id}/execute      # simulated execution (requires approval)
+POST /api/actions/{action_id}/execute      # execute via the configured channel (requires approval)
 POST /api/cases/{case_id}/evaluate-response  # AI response evaluation
 POST /api/cases/{case_id}/evaluate           # deterministic manual evaluation
 ```
 
-- `execute` is simulated: it records a `RESOLVE-ACTION-*` reference number and
-  a result and always succeeds; no external side effects.
-- Execution of an action moves the case to `awaiting_response`.
+- Actions are created by the follow-up planner (`prepare-followup`); the server
+  provides no endpoint to create an action directly and the planner itself is
+  read-only and only ever returns a proposal.
+- `execute` routes the action through the configured execution channel
+  (simulated by default — see "Execution channels"), records the delivery
+  reference and result on the action, and moves the case to
+  `awaiting_response`.
+- If the channel fails to deliver, the action is recorded as `failed` and the
+  case is left untouched; it may be retried safely.
 - A company response can then be recorded and evaluated.
 
 ## Automatic follow-up loop (Phase 6C)

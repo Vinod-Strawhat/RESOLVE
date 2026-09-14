@@ -10,6 +10,7 @@ from backend.api.agent import router as agent_router
 from backend.api.case_responses import router as case_responses_router
 from backend.api.cases import router as cases_router
 from backend.api.config import router as config_router
+from backend.api.history import router as history_router
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -29,6 +30,7 @@ app.include_router(cases_router)
 app.include_router(case_responses_router)
 app.include_router(actions_router)
 app.include_router(config_router)
+app.include_router(history_router)
 
 cors_origins = [
     origin.strip()

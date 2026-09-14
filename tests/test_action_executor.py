@@ -232,6 +232,53 @@ def test_execution_channel_persisted_on_failure(env):
     assert saved["execution_error"] == "channel outage"
 
 
+def test_delivered_but_unrecorded_execution_is_not_marked_failed(env, monkeypatch):
+    action = _approved(env["action_store"], env["case_id"])
+    channel = CountingChannel()
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("db locked")
+
+    monkeypatch.setattr(env["action_store"], "complete_execution", boom)
+    outcome = _executor(env, channel=channel).execute(action["id"])
+
+    assert outcome.status == "delivered"
+    assert outcome.reference.startswith("RESOLVE-ACTION-")
+    assert "execution record not persisted" in outcome.error
+
+    saved = env["action_store"].get_action(action["id"])
+    assert saved["status"] == "executing"
+
+    with pytest.raises(ValueError, match="currently being executed"):
+        _executor(env, channel=channel).execute(action["id"])
+    assert channel.calls == 1
+
+
+def test_executed_but_case_transition_failure_reports_executed(env, monkeypatch):
+    action = _approved(env["action_store"], env["case_id"])
+    channel = CountingChannel()
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("transition rejected")
+
+    monkeypatch.setattr(env["case_store"], "transition_status", boom)
+    outcome = _executor(env, channel=channel).execute(action["id"])
+
+    assert outcome.status == "executed"
+    assert outcome.reference.startswith("RESOLVE-ACTION-")
+    assert "case status not updated" in outcome.error
+    assert outcome.executed_at is not None
+
+    saved = env["action_store"].get_action(action["id"])
+    assert saved["status"] == "executed"
+    assert saved["execution_status"] == "executed"
+    assert saved["execution_reference"] == outcome.reference
+
+    case = env["case_store"].get_case(env["case_id"])
+    assert case["status"] is None
+    assert channel.calls == 1
+
+
 def test_concurrent_execute_calls_channel_exactly_once(env):
     import threading
 
