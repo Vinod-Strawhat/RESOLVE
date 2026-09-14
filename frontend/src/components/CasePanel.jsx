@@ -361,6 +361,7 @@ function CasePanel({
   aiEvaluation,
   followupStatus,
   prepareFollowupBusy,
+  executionConfig,
 }) {
   return (
     <div className="case-column">
@@ -376,6 +377,7 @@ function CasePanel({
         onExecute={onExecute}
         busy={decideBusy}
         executeBusy={executeBusy}
+        executionConfig={executionConfig}
       />
       <ResponseTestingPanel
         caseData={caseData}

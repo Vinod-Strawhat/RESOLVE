@@ -1,10 +1,21 @@
-function ActionCard({ action, onDecide, onExecute, busy, executeBusy }) {
+import { useState } from 'react'
+
+function ActionCard({ action, onDecide, onExecute, busy, executeBusy, realSendingEnabled }) {
   const isPending = action.status === 'pending_approval'
   const isApproved = action.status === 'approved'
   const isExecuting = action.status === 'executing'
   const isExecuted = action.status === 'executed'
   const isFailed = action.status === 'failed'
   const isRejected = action.status === 'rejected'
+  const [confirming, setConfirming] = useState(false)
+
+  function handleExecuteClick() {
+    if (realSendingEnabled) {
+      setConfirming(true)
+    } else {
+      onExecute(action.id)
+    }
+  }
 
   return (
     <article className="action-card">
@@ -109,22 +120,64 @@ function ActionCard({ action, onDecide, onExecute, busy, executeBusy }) {
       ) : null}
 
       {isApproved ? (
-        <div className="action-buttons">
-          <button
-            className="execute"
-            onClick={() => onExecute(action.id)}
-            disabled={executeBusy}
-          >
-            {executeBusy ? 'Executing…' : 'Execute Action'}
-          </button>
+        <div>
+          {confirming ? (
+            <div className="real-send-confirm">
+              <p>
+                Executing this action will send a real email through the
+                configured local SMTP relay.
+              </p>
+              <div className="action-buttons">
+                <button
+                  className="execute confirm-now"
+                  onClick={() => {
+                    setConfirming(false)
+                    onExecute(action.id)
+                  }}
+                  disabled={executeBusy}
+                >
+                  {executeBusy ? 'Sending…' : 'Confirm & Send'}
+                </button>
+                <button
+                  className="reject cancel-confirm"
+                  onClick={() => setConfirming(false)}
+                  disabled={executeBusy}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="action-buttons">
+              <button
+                className="execute"
+                onClick={handleExecuteClick}
+                disabled={executeBusy}
+              >
+                {executeBusy
+                  ? realSendingEnabled
+                    ? 'Sending…'
+                    : 'Executing…'
+                  : realSendingEnabled
+                    ? 'Execute (sends real email)'
+                    : 'Execute Action'}
+              </button>
+            </div>
+          )}
         </div>
       ) : null}
     </article>
   )
 }
 
-function ActionReview({ actions, onDecide, onExecute, busy, executeBusy }) {
+function ActionReview({ actions, onDecide, onExecute, busy, executeBusy, executionConfig }) {
   const relevant = actions.filter((action) => action.status !== 'draft')
+  const realSendingEnabled = executionConfig
+    ? executionConfig.real_sending_enabled === true
+    : false
+  const channelLabel =
+    executionConfig && executionConfig.channel === 'smtp' ? 'SMTP' : 'Simulated'
+
   const waiting = relevant.find(
     (action) =>
       action.status === 'pending_approval' ||
@@ -153,6 +206,15 @@ function ActionReview({ actions, onDecide, onExecute, busy, executeBusy }) {
           {waiting ? 'Awaiting your decision or execution.' : 'No action currently waiting for approval.'}
         </p>
       </div>
+      <div className={`channel-badge channel-${executionConfig && executionConfig.channel}`}>
+        <span className="channel-badge-label">Channel:</span> {channelLabel}
+      </div>
+      {realSendingEnabled ? (
+        <p className="real-channel-warning">
+          SMTP is active. Executing an approved action will send a real email
+          through the configured local SMTP relay.
+        </p>
+      ) : null}
       {relevant.map((action) => (
         <ActionCard
           key={action.id}
@@ -161,6 +223,7 @@ function ActionReview({ actions, onDecide, onExecute, busy, executeBusy }) {
           onExecute={onExecute}
           busy={busy}
           executeBusy={executeBusy}
+          realSendingEnabled={realSendingEnabled}
         />
       ))}
     </div>

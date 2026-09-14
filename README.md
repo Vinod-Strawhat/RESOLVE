@@ -22,11 +22,13 @@ refund, or a warranty claim that a company refused - RESOLVE will eventually:
 9. Wait, remember the case, and follow up when appropriate.
 10. Continue until the case is resolved or human intervention is required.
 
-> **Status: early foundation phase.** Phases 5-6C are implemented: a
-> human-approval workflow with simulated action execution, AI response
-> evaluation, and an automatic follow-up loop (up to 3 follow-up attempts per
-> case, then human intervention). Real email and other external integrations are
-> not implemented yet; execution is simulated with a reference number.
+> **Status: early foundation phase.** Phases 5-7A-1 are implemented:
+> a human-approval workflow with simulated action execution, AI response
+> evaluation, an automatic follow-up loop (up to 3 follow-up attempts per case,
+> then human intervention), and pluggable execution channels including a local
+> SMTP relay (Mailpit-compatible) behind the same approval gate. Real email via
+> AWS SES and other external integrations are not implemented yet; execution is
+> simulated by default.
 
 ## Conversation memory (Phase 3)
 
@@ -188,6 +190,29 @@ repeatable loop:
 - `GET /api/cases/{case_id}/followup-status` reports the current attempt count
   and whether another follow-up action is still allowed.
 
+## Execution channels (Phase 7A-1)
+
+Action execution is pluggable through a small `Channel` protocol
+(`backend/channels/base.py`). The channel is only ever invoked by
+`ActionExecutor` after an action is `approved`; the human-approval model and
+the state machine are unchanged.
+
+- **Simulated (default):** `EXECUTION_CHANNEL=simulated` (or unset). Records a
+  `RESOLVE-ACTION-*` reference; nothing is sent anywhere.
+- **Local SMTP relay:** `EXECUTION_CHANNEL=smtp` sends a plain-text email
+  through a local relay such as Mailpit (`backend/channels/smtp.py`). Requires
+  `SMTP_HOST`, `SMTP_FROM`, and `SMTP_TO`; `SMTP_PORT` defaults to 1025 and
+  `SMTP_USERNAME`/`SMTP_PASSWORD`/`SMTP_STARTTLS` are optional. The recipient
+  comes ONLY from `SMTP_TO` - never from the model's free-text `target` field.
+- Unknown `EXECUTION_CHANNEL` values and missing SMTP configuration **fail
+  closed**: they never silently fall back to simulated.
+
+The running channel is reported at `GET /api/config/execution`
+(`{"channel": "...", "real_sending_enabled": bool}`); the response contains no
+hosts, recipients, or credentials. The UI shows the active channel and, when
+SMTP is active, requires an explicit confirmation before executing an approved
+action.
+
 ## Current MVP scope
 
 The MVP deliberately targets a narrow domain:
@@ -283,6 +308,13 @@ API keys.
   planner, backend-enforced maximum of 3 follow-up attempts (configurable via
   `MAX_FOLLOWUPS`), preparation + approval + simulated execution + re-evaluation
   cycle, and forced `human_intervention` once the limit is reached.
+- **Phase 7A-1 (done):** pluggable execution channels - `Channel` protocol,
+  simulated channel extracted to `backend/channels/simulated.py`, and a local
+  SMTP relay channel (`backend/channels/smtp.py`) selected via
+  `EXECUTION_CHANNEL`; atomic single-flight `begin_execution`,
+  `execution_channel` persistence, `GET /api/config/execution`, and a
+  frontend confirmation step before any real-channel send.
 
-Email, and any AgentCore/AWS deployment belong to **later phases** and are
-deliberately not implemented yet. No OCR is performed on scanned documents.
+AWS SES (a real external email channel) and any AgentCore/AWS deployment belong
+to **later phases** and are deliberately not implemented yet. No OCR is
+performed on scanned documents.

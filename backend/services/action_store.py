@@ -26,6 +26,7 @@ _EXECUTION_COLUMNS = (
     ("execution_reference", "TEXT"),
     ("execution_result", "TEXT"),
     ("execution_error", "TEXT"),
+    ("execution_channel", "TEXT"),
 )
 
 _ACTIONS_DDL = """
@@ -98,6 +99,7 @@ class ActionStore:
         "execution_reference",
         "execution_result",
         "execution_error",
+        "execution_channel",
         "created_at",
         "approved_at",
         "rejected_at",
@@ -212,26 +214,37 @@ class ActionStore:
             )
         return self.get_action(action_id)
 
-    def begin_execution(self, action_id: str) -> dict:
+    def begin_execution(
+        self, action_id: str, *, channel_name: str | None = None
+    ) -> dict:
         """Transition an approved action into the executing state.
 
         Only approved actions may be executed. A completed (executed) action
         must never be executed twice.
+
+        The transition is a single atomic compare-and-set (``WHERE id = ?
+        AND status = 'approved'``) so concurrent callers cannot both win the
+        race and reach the channel.  The executing channel name is persisted
+        at this point for audit, before any delivery attempt.
         """
-        action = self.get_action(action_id)
-        if action is None:
-            raise ValueError(f"action not found: {action_id}")
-        if action["status"] != "approved":
-            raise ValueError(
-                f"cannot execute action in status {action['status']!r}; "
-                "only approved actions may be executed"
-            )
         with self._connect() as conn:
-            conn.execute(
-                "UPDATE actions SET status = 'executing', execution_status = 'executing' "
-                "WHERE id = ?",
-                (action_id,),
+            cursor = conn.execute(
+                "UPDATE actions SET status = 'executing', "
+                "execution_status = 'executing', "
+                "execution_channel = COALESCE(?, execution_channel) "
+                "WHERE id = ? AND status = 'approved'",
+                (channel_name, action_id),
             )
+            if cursor.rowcount == 0:
+                action = self.get_action(action_id)
+                if action is None:
+                    raise ValueError(f"action not found: {action_id}")
+                if action["status"] == "executing":
+                    raise ValueError("action is currently being executed")
+                raise ValueError(
+                    f"cannot execute action in status {action['status']!r}; "
+                    "only approved actions may be executed"
+                )
         return self.get_action(action_id)
 
     def complete_execution(

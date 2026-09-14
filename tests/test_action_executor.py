@@ -180,3 +180,82 @@ def test_simulated_channel_result_is_clearly_labeled(env):
     assert reference == f"RESOLVE-ACTION-{action['id'][:8].upper()}"
     assert "simulated" in result
     assert "nothing was actually sent" in result
+
+
+class NamedChannel(CountingChannel):
+    name = "testsmtp"
+
+    def submit(self, action):
+        self.calls += 1
+        return f"RESOLVE-EMAIL-{action['id'][:8].upper()}", "named-channel done"
+
+
+class SlowChannel:
+    def __init__(self):
+        self.calls = 0
+
+    def submit(self, action):
+        import time
+
+        time.sleep(0.05)
+        self.calls += 1
+        return f"SLOW-{action['id'][:8]}", "slow ok"
+
+
+def test_execution_channel_persisted_on_success(env):
+    action = _approved(env["action_store"], env["case_id"])
+    channel = NamedChannel()
+    outcome = _executor(env, channel=channel).execute(action["id"])
+    assert outcome.status == "executed"
+    assert outcome.channel == "testsmtp"
+    saved = env["action_store"].get_action(action["id"])
+    assert saved["execution_channel"] == "testsmtp"
+
+
+def test_execution_channel_persisted_on_failure(env):
+    action = _approved(env["action_store"], env["case_id"])
+
+    class FailingNamedChannel(NamedChannel):
+        name = "failing"
+
+        def submit(self, action):
+            self.calls += 1
+            raise RuntimeError("channel outage")
+
+    outcome = _executor(env, channel=FailingNamedChannel()).execute(action["id"])
+    assert outcome.status == "failed"
+    assert outcome.channel == "failing"
+
+    saved = env["action_store"].get_action(action["id"])
+    assert saved["status"] == "failed"
+    assert saved["execution_channel"] == "failing"
+    assert saved["execution_error"] == "channel outage"
+
+
+def test_concurrent_execute_calls_channel_exactly_once(env):
+    import threading
+
+    action = _approved(env["action_store"], env["case_id"])
+    channel = SlowChannel()
+    executor = _executor(env, channel=channel)
+    barrier = threading.Barrier(2)
+    results = []
+
+    def run():
+        barrier.wait()
+        try:
+            results.append(("ok", executor.execute(action["id"])))
+        except Exception as exc:
+            results.append(("err", exc))
+
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert channel.calls == 1
+    executed = [r for r in results if r[0] == "ok" and r[1].status == "executed"]
+    assert len(executed) >= 1
+    saved = env["action_store"].get_action(action["id"])
+    assert saved["status"] == "executed"

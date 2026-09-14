@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   ApiError,
   decideAction,
@@ -7,6 +7,7 @@ import {
   executeAction,
   getActions,
   getCase,
+  getExecutionConfig,
   getFollowupStatus,
   getResponses,
   postChat,
@@ -54,6 +55,18 @@ function App() {
   const [prepareFollowupBusy, setPrepareFollowupBusy] = useState(false)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
+  const [executionConfig, setExecutionConfig] = useState({
+    channel: 'simulated',
+    real_sending_enabled: false,
+  })
+
+  useEffect(() => {
+    getExecutionConfig()
+      .then(setExecutionConfig)
+      .catch(() => {
+        setExecutionConfig({ channel: 'simulated', real_sending_enabled: false })
+      })
+  }, [])
 
   async function refreshCaseData(id) {
     const caseResponse = await getCase(id)
@@ -321,6 +334,7 @@ function App() {
           aiEvaluation={aiEvaluation}
           followupStatus={followupStatus}
           prepareFollowupBusy={prepareFollowupBusy}
+          executionConfig={executionConfig}
         />
       </div>
     </main>

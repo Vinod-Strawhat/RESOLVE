@@ -1,38 +1,29 @@
-"""Phase 6A execution service: approved -> executing -> executed | failed.
+"""Phase 6A/7A-1 execution service: approved -> executing -> executed | failed.
 
 Execution is triggered exclusively through the execution API. The Strands
 agent cannot execute an action; the human approval gate stays mandatory.
 
-The current channel is a SAFE SIMULATED execution. Nothing is sent to any
-real company. The channel object is the single integration point, so a real
-support channel (email, Gmail, support API) can replace the simulator later
-without redesigning the action lifecycle.
+The channel object is the single integration point. The default is the safe
+SIMULATED channel (nothing is sent to any real company). A local SMTP relay
+channel can be selected with ``EXECUTION_CHANNEL=smtp``; a real support channel
+(email, Gmail, support API) can later replace it without redesigning the action
+lifecycle.
+
+``SimulatedExecutionChannel`` is re-exported from this module for backward
+compatibility (it now lives in :mod:`backend.channels.simulated`).
 """
 
 import threading
 from dataclasses import dataclass
 
+from backend.channels.base import ChannelResult
+from backend.channels.factory import build_channel
+from backend.channels.simulated import SimulatedExecutionChannel as _Simulated
 from backend.services.action_store import get_action_store
 from backend.services.case_store import get_case_store
 
-
-class SimulatedExecutionChannel:
-    """Safe, clearly-labeled simulated execution channel.
-
-    Produces a stable execution reference and a human-readable result without
-    making any external request. A real channel should implement the same
-    ``submit`` contract: given an approved action, return ``(reference, result)``
-    or raise an exception (the failure is then persisted).
-    """
-
-    def submit(self, action: dict) -> tuple[str, str]:
-        reference = f"RESOLVE-ACTION-{action['id'][:8].upper()}"
-        result = (
-            "Action submitted through the configured simulated support channel. "
-            f"Reference {reference}. This is a simulated execution; nothing was "
-            "actually sent to any external party."
-        )
-        return reference, result
+# Backward-compatible alias: previously defined in this module.
+SimulatedExecutionChannel = _Simulated
 
 
 @dataclass(frozen=True)
@@ -42,6 +33,7 @@ class ExecutionOutcome:
     result: str = ""
     error: str = ""
     executed_at: str | None = None
+    channel: str = ""
 
 
 class ActionExecutor:
@@ -50,12 +42,19 @@ class ActionExecutor:
     Only ``approved`` actions may be executed. Executing an already executed
     action is idempotent: the existing execution state/result is returned and
     the action is never executed twice. Failures are persisted on the action.
+
+    A channel is only ever invoked AFTER ``begin_execution`` succeeds, so the
+    approval gate cannot be bypassed by any channel implementation.
     """
 
     def __init__(self, action_store, case_store, channel=None):
         self._store = action_store
         self._cases = case_store
-        self._channel = channel or SimulatedExecutionChannel()
+        self._channel = channel if channel is not None else build_channel()
+
+    @property
+    def channel_name(self) -> str:
+        return getattr(self._channel, "name", "simulated")
 
     def execute(self, action_id: str) -> ExecutionOutcome:
         action = self._store.get_action(action_id)
@@ -74,9 +73,14 @@ class ActionExecutor:
                 "only approved actions may be executed"
             )
 
-        self._store.begin_execution(action_id)
+        channel_name = self.channel_name
+        self._store.begin_execution(action_id, channel_name=channel_name)
         try:
-            reference, result = self._channel.submit(action)
+            submission = self._channel.submit(action)
+            if isinstance(submission, ChannelResult):
+                reference, result = submission.reference, submission.result
+            else:
+                reference, result = submission
             completed = self._store.complete_execution(
                 action_id, reference=reference, result=result
             )
@@ -87,13 +91,14 @@ class ActionExecutor:
                 self._store.fail_execution(action_id, error=error)
             except ValueError:
                 pass
-            return ExecutionOutcome(status="failed", error=error)
+            return ExecutionOutcome(status="failed", error=error, channel=channel_name)
 
         return ExecutionOutcome(
             status="executed",
             reference=reference,
             result=result,
             executed_at=completed["executed_at"],
+            channel=channel_name,
         )
 
     def _existing_outcome(self, action: dict) -> ExecutionOutcome:
@@ -102,6 +107,7 @@ class ActionExecutor:
             reference=action.get("execution_reference") or "",
             result=action.get("execution_result") or "",
             executed_at=action.get("executed_at"),
+            channel=action.get("execution_channel") or "",
         )
 
 

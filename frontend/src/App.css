@@ -469,6 +469,62 @@
   background: #1a7f37;
 }
 
+/* ---- Execution channel indicator (Phase 7A-1) ---- */
+.channel-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  margin: 0 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--text);
+}
+
+.channel-badge .channel-badge-label {
+  opacity: 0.7;
+}
+
+.channel-badge.channel-smtp {
+  border-color: rgba(234, 179, 8, 0.6);
+  background: rgba(234, 179, 8, 0.1);
+  color: var(--text-h);
+}
+
+.real-channel-warning {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  border-radius: 6px;
+  border: 1px solid rgba(234, 179, 8, 0.5);
+  background: rgba(234, 179, 8, 0.08);
+  color: var(--text);
+}
+
+.real-send-confirm {
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(234, 179, 8, 0.6);
+  background: rgba(234, 179, 8, 0.1);
+}
+
+.real-send-confirm p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-h);
+}
+
+.real-send-confirm .confirm-now {
+  background: #b45b1a;
+}
+
+.real-send-confirm .cancel-confirm {
+  background: #555;
+}
+
 .execution-meta {
   display: flex;
   gap: 20px;

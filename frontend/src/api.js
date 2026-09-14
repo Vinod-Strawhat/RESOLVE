@@ -114,3 +114,7 @@ export async function prepareFollowup(caseId) {
     }),
   )
 }
+
+export async function getExecutionConfig() {
+  return handle(await fetch('/api/config/execution'))
+}
