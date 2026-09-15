@@ -3,3 +3,4 @@ uvicorn[standard]>=0.32
 strands-agents[openai]>=1.54
 python-dotenv>=1.0
 pypdf>=4.0
+argon2-cffi>=23.1

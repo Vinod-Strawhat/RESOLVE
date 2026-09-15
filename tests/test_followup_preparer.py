@@ -2,6 +2,7 @@ import pytest
 
 from backend.services.case_store import CaseStore
 from backend.services.followup_preparer import (
+    PREPARER_MAX_ATTEMPTS,
     build_followup_context,
     prepare_followup_action,
     validate_prepared_action,
@@ -9,6 +10,8 @@ from backend.services.followup_preparer import (
 )
 from backend.services.followup_store import FollowupStore
 from backend.services.response_store import ResponseStore
+from backend.services.user_store import UserStore
+from conftest import create_test_user
 
 
 # --- Validator / defensive parser tests ---
@@ -161,14 +164,29 @@ class FakeAgent:
         return _Result(self._raw_output)
 
 
+class FakeSequencedAgent:
+    """Returns outputs in sequence (repeating the last), tracking call count."""
+
+    def __init__(self, outputs):
+        self._outputs = list(outputs)
+        self.calls = 0
+
+    def __call__(self, prompt):
+        idx = min(self.calls, len(self._outputs) - 1)
+        self.calls += 1
+        return FakeAgent(self._outputs[idx])(prompt)
+
+
 def _env(tmp_path):
     case_store = CaseStore(tmp_path / "resolve.db")
+    user_id = create_test_user(UserStore(tmp_path / "resolve.db"))["id"]
     response_store = ResponseStore(tmp_path / "resolve.db")
     followup_store = FollowupStore(tmp_path / "resolve.db")
     from backend.services.action_store import ActionStore
     action_store = ActionStore(tmp_path / "resolve.db")
     case_id = case_store.create_case(
         "session-fu",
+        user_id=user_id,
         title="Claim DELL-2026-4821",
         category="warranty",
         description="Laptop charging port failed.",
@@ -238,6 +256,56 @@ def test_prepare_malformed_json(tmp_path):
             case_store, response_store, action_store, followup_store,
             case_id, agent=FakeAgent("not json at all"),
         )
+    assert action_store.list_actions_for_case(case_id) == []
+
+
+def test_prepare_safety_classification_not_treated_as_action(tmp_path):
+    """Safety-only model output must never become a follow-up action."""
+    case_store, response_store, action_store, followup_store, case_id = _env(tmp_path)
+    agent = FakeSequencedAgent(["User Safety: safe\nResponse Safety: safe"])
+    with pytest.raises(ValueError, match="failed to parse"):
+        prepare_followup_action(
+            case_store, response_store, action_store, followup_store,
+            case_id, agent=agent,
+        )
+    assert action_store.list_actions_for_case(case_id) == []
+    assert agent.calls == PREPARER_MAX_ATTEMPTS
+
+
+def test_prepare_non_object_json_rejected(tmp_path):
+    case_store, response_store, action_store, followup_store, case_id = _env(tmp_path)
+    with pytest.raises(ValueError, match="failed to parse"):
+        prepare_followup_action(
+            case_store, response_store, action_store, followup_store,
+            case_id, agent=FakeAgent('["escalation"]'),
+        )
+    with pytest.raises(ValueError, match="expected a JSON object"):
+        prepare_followup_action(
+            case_store, response_store, action_store, followup_store,
+            case_id, agent=FakeAgent('```json\n["escalation"]\n```'),
+        )
+    assert action_store.list_actions_for_case(case_id) == []
+
+
+def test_prepare_recovers_after_invalid_output(tmp_path):
+    """A corrective retry recovers when the model first returns non-JSON."""
+    case_store, response_store, action_store, followup_store, case_id = _env(tmp_path)
+    agent = FakeSequencedAgent(
+        [
+            "User Safety: safe\nResponse Safety: safe",
+            '{"type":"escalation","title":"Escalate to marketplace mediation",'
+            '"reason":"The seller rejected the refund without evidence.",'
+            '"content":"Request platform mediation for a full refund.",'
+            '"target":"Payment processor"}',
+        ]
+    )
+    result = prepare_followup_action(
+        case_store, response_store, action_store, followup_store,
+        case_id, agent=agent,
+    )
+    assert result.type == "escalation"
+    assert result.title == "Escalate to marketplace mediation"
+    assert agent.calls == 2
 
 
 def test_prepare_invalid_action_validated(tmp_path):

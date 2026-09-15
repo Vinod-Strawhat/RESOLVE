@@ -4,24 +4,43 @@ from fastapi.testclient import TestClient
 from backend.main import app
 from backend.services.action_executor import ActionExecutor
 from backend.services.action_store import ActionStore
+from backend.services.auth import COOKIE_NAME
 from backend.services.case_store import CaseStore
+from backend.services.session_store import SessionStore
+from backend.services.user_store import UserStore
+from conftest import create_test_user, issue_auth_token
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
+    user = create_test_user(UserStore(tmp_path / "resolve.db"))
+    session_store = SessionStore(tmp_path / "resolve.db")
     case_store = CaseStore(tmp_path / "resolve.db")
     action_store = ActionStore(tmp_path / "resolve.db")
     case_id = case_store.create_case(
         "session-1",
+        user_id=user["id"],
         title="Rejected warranty claim",
         category="warranty",
         description="ASUS refused coverage.",
     )["id"]
-    monkeypatch.setattr("backend.api.actions.get_case_store", lambda: case_store)
     monkeypatch.setattr("backend.api.actions.get_action_store", lambda: action_store)
     monkeypatch.setattr(
         "backend.api.actions.get_executor",
         lambda: ActionExecutor(action_store, case_store),
+    )
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_case_store", lambda: case_store
+    )
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_action_store", lambda: action_store
+    )
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_user_store",
+        lambda: UserStore(tmp_path / "resolve.db"),
+    )
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_session_store", lambda: session_store
     )
 
     pending_id = action_store.create_action(
@@ -53,6 +72,9 @@ def env(tmp_path, monkeypatch):
         "approved_id": approved_id,
     }
     env["client"] = TestClient(app)
+    env["client"].cookies.set(
+        COOKIE_NAME, issue_auth_token(session_store, user["id"])
+    )
     return env
 
 

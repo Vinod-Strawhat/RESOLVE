@@ -47,6 +47,7 @@ CASE_FIELDS = (
 SESSIONS_DDL = """
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
+    user_id TEXT REFERENCES users (id),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -56,6 +57,7 @@ CASES_DDL = """
 CREATE TABLE IF NOT EXISTS cases (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
+    user_id TEXT REFERENCES users (id),
     category TEXT,
     title TEXT,
     description TEXT,
@@ -74,6 +76,11 @@ CREATE TABLE IF NOT EXISTS cases (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cases_session_id ON cases (session_id);
+"""
+
+_INDEXES_DDL = """
+CREATE INDEX IF NOT EXISTS idx_cases_user_id ON cases (user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions (user_id);
 """
 
 _SCHEMA = SESSIONS_DDL + CASES_DDL
@@ -99,6 +106,7 @@ class CaseStore:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
         self._ensure_resolved_column()
+        self._ensure_user_columns()
 
     def _ensure_resolved_column(self) -> None:
         """Migrate existing cases tables so the resolution timestamp exists."""
@@ -109,6 +117,19 @@ class CaseStore:
             if "resolved_at" not in existing:
                 conn.execute("ALTER TABLE cases ADD COLUMN resolved_at TEXT")
 
+    def _ensure_user_columns(self) -> None:
+        """Add user_id columns and indexes (cases + sessions) if missing (Phase 8B)."""
+        with self._connect() as conn:
+            case_cols = {row["name"] for row in conn.execute("PRAGMA table_info(cases)")}
+            if "user_id" not in case_cols:
+                conn.execute("ALTER TABLE cases ADD COLUMN user_id TEXT")
+            session_cols = {
+                row["name"] for row in conn.execute("PRAGMA table_info(sessions)")
+            }
+            if "user_id" not in session_cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT")
+            conn.executescript(_INDEXES_DDL)
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path, timeout=5.0)
         conn.row_factory = sqlite3.Row
@@ -118,6 +139,7 @@ class CaseStore:
     _COLUMNS = (
         "id",
         "session_id",
+        "user_id",
         "category",
         "title",
         "description",
@@ -162,11 +184,14 @@ class CaseStore:
         self,
         session_id: str,
         *,
+        user_id: str,
         title: str,
         category: str,
         description: str,
         **optional_fields: str,
     ) -> dict:
+        if not user_id or not str(user_id).strip():
+            raise ValueError("user_id must not be empty")
         if self.get_case_by_session(session_id) is not None:
             raise ValueError("a case already exists for this session; use update_case")
         case_id = uuid.uuid4().hex
@@ -174,6 +199,7 @@ class CaseStore:
         values = {
             "id": case_id,
             "session_id": session_id,
+            "user_id": user_id,
             "title": title,
             "category": category,
             "description": description,
@@ -278,6 +304,9 @@ class CaseStore:
         values = {"status": new_status, "updated_at": now}
         if new_status == "resolved":
             values["resolved_at"] = now
+            # A resolved case has no pending user guidance; clear any stale
+            # "awaiting further details" instruction left from earlier phases.
+            values["next_action"] = ""
         columns = ", ".join(f"{field} = ?" for field in values)
         params = tuple(values.values()) + (case_id,)
         with self._connect() as conn:
@@ -288,6 +317,29 @@ class CaseStore:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM cases ORDER BY created_at, rowid").fetchall()
         return [self._row_to_case(row) for row in rows]
+
+    def list_cases_for_user(self, user_id: str) -> list[dict]:
+        """Return only cases belonging to ``user_id``, most recently updated first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM cases WHERE user_id = ? "
+                "ORDER BY updated_at DESC, created_at DESC, rowid DESC",
+                (user_id,),
+            ).fetchall()
+        return [self._row_to_case(row) for row in rows]
+
+    def claim_unowned_cases(self, user_id: str) -> int:
+        """Assign ``user_id`` to every case without an owner (idempotent).
+
+        Used by the Phase 8B legacy migration to backfill pre-existing rows.
+        Returns the number of cases claimed.
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE cases SET user_id = ? WHERE user_id IS NULL OR user_id = ''",
+                (user_id,),
+            )
+        return cursor.rowcount
 
 
 _case_store: CaseStore | None = None

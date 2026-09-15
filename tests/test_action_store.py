@@ -5,11 +5,12 @@ from backend.services.case_store import CaseStore
 
 
 @pytest.fixture
-def stores(tmp_path):
+def stores(tmp_path, user):
     case_store = CaseStore(tmp_path / "resolve.db")
     action_store = ActionStore(tmp_path / "resolve.db")
     case_id = case_store.create_case(
         "session-abc",
+        user_id=user["id"],
         title="Rejected warranty claim",
         category="warranty",
         description="Company refused coverage.",
@@ -199,11 +200,11 @@ def test_rejected_cannot_be_rerejected(stores):
 
 # --- Persistence ---
 
-def test_restart_persistence(tmp_path):
+def test_restart_persistence(tmp_path, user):
     path = tmp_path / "resolve.db"
     case_store = CaseStore(path)
     case_id = case_store.create_case(
-        "s1", title="A", category="warranty", description="D"
+        "s1", user_id=user["id"], title="A", category="warranty", description="D"
     )["id"]
     store_one = ActionStore(path)
     store_one.create_action(
@@ -307,11 +308,11 @@ def test_fail_execution_persists_error(stores):
     assert failed["executed_at"] is None
 
 
-def test_execution_state_persists_across_restart(tmp_path):
+def test_execution_state_persists_across_restart(tmp_path, user):
     path = tmp_path / "resolve.db"
     case_store = CaseStore(path)
     case_id = case_store.create_case(
-        "s1", title="A", category="warranty", description="D"
+        "s1", user_id=user["id"], title="A", category="warranty", description="D"
     )["id"]
     store_one = ActionStore(path)
     action = _approved(store_one, case_id)

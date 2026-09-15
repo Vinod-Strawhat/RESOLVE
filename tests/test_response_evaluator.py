@@ -2,12 +2,15 @@ import pytest
 
 from backend.services.case_store import CaseStore
 from backend.services.response_evaluator import (
+    EVALUATOR_SYSTEM_PROMPT,
     build_evaluation_context,
     evaluate_response,
     validate_evaluation_result,
     _extract_json,
 )
 from backend.services.response_store import ResponseStore
+from backend.services.user_store import UserStore
+from conftest import create_test_user
 
 
 # --- Validator / defensive parser tests ---
@@ -194,6 +197,126 @@ def test_build_context_with_responses():
     assert "follow-up" in context
 
 
+# --- Stale workflow fields must not become evaluation evidence ---
+
+def test_build_context_omits_stale_workflow_fields():
+    """status/next_action are internal bookkeeping and must not reach the model
+    as case facts, even when they still hold stale pre-resolution values."""
+    case = {
+        "id": "abc",
+        "category": "warranty",
+        "title": "ASUS Vivobook 15 dispute",
+        "description": "Defective laptop; warranty claim rejected.",
+        "status": "response_received",
+        "next_action": "awaiting further details from user",
+    }
+    responses = [
+        {
+            "id": "r1",
+            "source": "simulated_support",
+            "content": (
+                "The replacement laptop has been delivered and the case is "
+                "closed. No further action is required."
+            ),
+            "received_at": "t1",
+        }
+    ]
+    context = build_evaluation_context(case, responses)
+    assert "- status: response_received" not in context
+    assert "- next_action:" not in context
+    assert "awaiting further details from user" not in context
+    assert "delivered and the case is" in context
+
+
+def test_build_context_labels_workflow_status_as_bookkeeping():
+    case = {"id": "abc", "status": "response_received", "next_action": "x"}
+    context = build_evaluation_context(case, [])
+    assert "Workflow status" in context
+    assert "NOT evidence" in context
+
+
+@pytest.mark.parametrize(
+    "stale_next_action",
+    [
+        "awaiting further details from user",
+        "please confirm delivery of the replacement",
+        "provide photos of the charging port",
+    ],
+)
+def test_build_context_never_echoes_stale_next_action(stale_next_action):
+    case = {"id": "abc", "next_action": stale_next_action}
+    responses = [
+        {
+            "id": "r1",
+            "source": "simulated_support",
+            "content": "The replacement was delivered.",
+            "received_at": "t1",
+        }
+    ]
+    context = build_evaluation_context(case, responses)
+    assert stale_next_action not in context
+    assert "The replacement was delivered." in context
+    assert "- next_action:" not in context
+
+
+# --- Prompt rules: resolution recognition ---
+
+def test_system_prompt_latest_response_is_primary_evidence():
+    assert "LATEST response is the primary evidence" in EVALUATOR_SYSTEM_PROMPT
+
+
+def test_system_prompt_workflow_fields_not_facts():
+    assert "Structured case fields are internal bookkeeping" in EVALUATOR_SYSTEM_PROMPT
+    assert "must never override the latest response" in EVALUATOR_SYSTEM_PROMPT
+
+
+def test_system_prompt_resolved_requires_completion():
+    assert "genuinely completed or closed" in EVALUATOR_SYSTEM_PROMPT
+    for phrase in ("a replacement was", "a refund was issued",
+                   "a repair was completed",
+                   "no further action is required"):
+        assert phrase in EVALUATOR_SYSTEM_PROMPT
+
+
+def test_system_prompt_approval_without_completion_not_resolved():
+    assert "Do NOT use 'resolved' for: an approval" in EVALUATOR_SYSTEM_PROMPT
+    for phrase in ("we will ship", "please confirm delivery", "will issue"):
+        assert phrase in EVALUATOR_SYSTEM_PROMPT
+
+
+def test_evaluate_prompt_contains_context_and_schema(tmp_path):
+    """The prompt handed to the model must contain the context plus output schema."""
+    case_store, response_store, case_id = _env(tmp_path)
+
+    captured = {}
+
+    class CapturingAgent:
+        def __init__(self, raw_output):
+            self._raw_output = raw_output
+
+        def __call__(self, prompt):
+            class _Result:
+                def __init__(self, text):
+                    self.message = {"content": [{"text": text}]}
+
+            captured["prompt"] = prompt
+            return _Result(self._raw_output)
+
+    result = evaluate_response(
+        case_store,
+        response_store,
+        case_id,
+        agent=CapturingAgent(
+            '{"outcome":"needs_follow_up","confidence":0.5,"reason":"r","next_step":"s"}'
+        ),
+    )
+    assert result.outcome == "needs_follow_up"
+    assert "=== CASE DETAILS ===" in captured["prompt"]
+    assert "=== LATEST RESPONSE (" in captured["prompt"]
+    assert "outcome" in captured["prompt"]
+    assert "confidence" in captured["prompt"]
+
+
 # --- Evaluator end-to-end (mocked model output) ---
 
 class FakeAgent:
@@ -210,9 +333,11 @@ class FakeAgent:
 
 def _env(tmp_path):
     case_store = CaseStore(tmp_path / "resolve.db")
+    user_id = create_test_user(UserStore(tmp_path / "resolve.db"))["id"]
     response_store = ResponseStore(tmp_path / "resolve.db")
     case_id = case_store.create_case(
         "session-eval",
+        user_id=user_id,
         title="Claim DELL-2026-4821",
         category="warranty",
         description="Laptop charging port failed; warranty claim rejected.",
@@ -254,9 +379,10 @@ def test_evaluate_response_wrong_state(tmp_path):
 
 def test_evaluate_response_no_responses(tmp_path):
     case_store = CaseStore(tmp_path / "resolve.db")
+    user_id = create_test_user(UserStore(tmp_path / "resolve.db"))["id"]
     response_store = ResponseStore(tmp_path / "resolve.db")
     case_id = case_store.create_case(
-        "s1", title="A", category="warranty", description="D"
+        "s1", user_id=user_id, title="A", category="warranty", description="D"
     )["id"]
     case_store.transition_status(case_id, "awaiting_response")
     case_store.transition_status(case_id, "response_received")

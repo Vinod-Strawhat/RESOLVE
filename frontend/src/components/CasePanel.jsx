@@ -160,7 +160,9 @@ function ResponseTestingPanel({
     <div className="response-testing-panel">
       <div className="panel-heading">
         <h2>Resolution</h2>
-        <p className="simulate-note">Simulated / manual testing only.</p>
+        <p className="simulate-note">
+          Demo environment — responses and evaluations are simulated.
+        </p>
       </div>
 
       <dl className="case-fields">
@@ -195,11 +197,11 @@ function ResponseTestingPanel({
             onChange={(e) => setContent(e.target.value)}
             disabled={!canRespond || responseBusy}
             aria-label="Response text"
-            placeholder="Enter the company's simulated response"
+            placeholder="Enter the company's reply to record it"
           />
         </label>
         <button type="submit" disabled={!canRespond || responseBusy || !content.trim()}>
-          {responseBusy ? 'Recording…' : 'Record simulated response'}
+          {responseBusy ? 'Recording…' : 'Record response'}
         </button>
       </form>
 
@@ -386,11 +388,13 @@ function CasePanel({
   return (
     <div className="case-column">
       <CaseDetails caseData={caseData} />
+
       <EvidencePanel
         documents={documents}
         onUpload={onUpload}
         busy={uploadBusy}
       />
+
       <ActionReview
         actions={actions}
         onDecide={onDecide}
@@ -398,7 +402,9 @@ function CasePanel({
         busy={decideBusy}
         executeBusy={executeBusy}
         executionConfig={executionConfig}
+        caseStatus={caseData?.status}
       />
+
       <ResponseTestingPanel
         caseData={caseData}
         responses={responses}
@@ -413,6 +419,7 @@ function CasePanel({
         followupStatus={followupStatus}
         prepareFollowupBusy={prepareFollowupBusy}
       />
+
       <HistoryTimeline
         events={history}
         loading={historyLoading}

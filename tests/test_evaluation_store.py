@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 
 from backend.services.case_store import CaseStore
@@ -5,21 +7,26 @@ from backend.services.evaluation_store import (
     EVALUATION_SOURCES,
     EvaluationStore,
 )
+from backend.services.user_store import UserStore
+from conftest import create_test_user
 
 
 @pytest.fixture
-def env(tmp_path):
+def env(tmp_path, user):
     path = tmp_path / "resolve.db"
+    user_id = user["id"]
     case_store = CaseStore(path)
     evaluation_store = EvaluationStore(path)
     case1 = case_store.create_case(
         "session-eval-1",
+        user_id=user_id,
         title="Case one",
         category="warranty",
         description="d1",
     )["id"]
     case2 = case_store.create_case(
         "session-eval-2",
+        user_id=user_id,
         title="Case two",
         category="warranty",
         description="d2",
@@ -120,11 +127,12 @@ def test_sources_are_preserved(env):
     )) == set(EVALUATION_SOURCES)
 
 
-def test_restart_persistence(tmp_path):
+def test_restart_persistence(tmp_path, user):
     path = tmp_path / "resolve.db"
     case_store = CaseStore(path)
     case_id = case_store.create_case(
         "session-eval-persist",
+        user_id=user["id"],
         title="Persisted case",
         category="warranty",
         description="d",
@@ -166,3 +174,107 @@ def test_non_numeric_confidence_rejected(env):
         env["evaluation_store"].record_evaluation(
             env["case1"], outcome="resolved", source="manual", confidence="high"
         )
+
+
+def test_followup_marker_persists_round_trip(env):
+    evaluation = env["evaluation_store"].record_evaluation(
+        env["case1"],
+        outcome="needs_follow_up",
+        source="ai",
+        confidence=0.7,
+        reason="r",
+        next_step="s",
+        followup_marker="awaiting",
+    )
+    assert evaluation["followup_marker"] == "awaiting"
+    stored = env["evaluation_store"].get_evaluation(evaluation["id"])
+    assert stored["followup_marker"] == "awaiting"
+    listed = env["evaluation_store"].list_evaluations_for_case(env["case1"])
+    assert listed[0]["followup_marker"] == "awaiting"
+
+
+def test_followup_marker_defaults_to_none(env):
+    evaluation = env["evaluation_store"].record_evaluation(
+        env["case1"], outcome="resolved", source="ai"
+    )
+    assert evaluation["followup_marker"] is None
+
+
+@pytest.mark.parametrize(
+    "marker",
+    ["awaiting", "exhausted/overflowed", "permanently_blocked", "resolved"],
+)
+def test_followup_marker_valid_vocabulary(env, marker):
+    evaluation = env["evaluation_store"].record_evaluation(
+        env["case1"],
+        outcome="needs_follow_up",
+        source="ai",
+        followup_marker=marker,
+    )
+    assert evaluation["followup_marker"] == marker
+
+
+def test_followup_marker_invalid_rejected(env):
+    with pytest.raises(ValueError, match="invalid followup marker"):
+        env["evaluation_store"].record_evaluation(
+            env["case1"],
+            outcome="needs_follow_up",
+            source="ai",
+            followup_marker="maybe",
+        )
+
+
+def test_followup_marker_rejected_for_manual_source(env):
+    with pytest.raises(ValueError, match="only recorded for AI evaluations"):
+        env["evaluation_store"].record_evaluation(
+            env["case1"],
+            outcome="resolved",
+            source="manual",
+            followup_marker="resolved",
+        )
+
+
+def test_legacy_database_is_migrated_with_marker_column(tmp_path, user):
+    """A DB created before the marker column must be upgraded in place, with
+    existing rows reading back followup_marker=None."""
+    path = tmp_path / "legacy.db"
+    user_id = create_test_user(UserStore(path))["id"]
+    case_store = CaseStore(path)
+    case_id = case_store.create_case(
+        "session-legacy", user_id=user_id, title="T", category="warranty",
+        description="d",
+    )["id"]
+    legacy_ddl = (
+        "CREATE TABLE evaluations ("
+        "id TEXT PRIMARY KEY, case_id TEXT NOT NULL, outcome TEXT NOT NULL, "
+        "confidence REAL, reason TEXT, next_step TEXT, source TEXT NOT NULL, "
+        "created_at TEXT NOT NULL, "
+        "FOREIGN KEY (case_id) REFERENCES cases (id))"
+    )
+    with sqlite3.connect(path) as conn:
+        conn.execute(legacy_ddl)
+        conn.execute(
+            "INSERT INTO evaluations "
+            "(id, case_id, outcome, confidence, source, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("legacy-1", case_id, "resolved", 0.9, "manual", "2026-01-01T00:00:00"),
+        )
+
+    store = EvaluationStore(path)
+    columns = {
+        row[1] for row in sqlite3.connect(path).execute("PRAGMA table_info(evaluations)")
+    }
+    assert "followup_marker" in columns
+    legacy = store.get_evaluation("legacy-1")
+    assert legacy["outcome"] == "resolved"
+    assert legacy["followup_marker"] is None
+
+    store.record_evaluation(
+        case_id,
+        outcome="needs_follow_up",
+        source="ai",
+        followup_marker="awaiting",
+    )
+    records = store.list_evaluations_for_case(case_id)
+    markers = {r["followup_marker"] for r in records}
+    assert markers == {None, "awaiting"}

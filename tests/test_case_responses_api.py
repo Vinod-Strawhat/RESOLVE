@@ -2,20 +2,29 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from backend.services.auth import COOKIE_NAME
 from backend.services.case_store import CaseStore
 from backend.services.evaluation_store import EvaluationStore
 from backend.services.followup_store import FollowupStore
 from backend.services.response_evaluator import EvaluationOutcome
 from backend.services.response_store import ResponseStore
+from backend.services.session_store import SessionStore
+from backend.services.user_store import UserStore
+from conftest import create_test_user, issue_auth_token
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
+    user = create_test_user(UserStore(tmp_path / "resolve.db"))
+    session_store = SessionStore(tmp_path / "resolve.db")
     case_store = CaseStore(tmp_path / "resolve.db")
     response_store = ResponseStore(tmp_path / "resolve.db")
     followup_store = FollowupStore(tmp_path / "resolve.db")
     evaluation_store = EvaluationStore(tmp_path / "resolve.db")
     monkeypatch.setattr("backend.api.case_responses.get_case_store", lambda: case_store)
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_case_store", lambda: case_store
+    )
     monkeypatch.setattr(
         "backend.api.case_responses.get_response_store", lambda: response_store
     )
@@ -25,9 +34,16 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "backend.api.case_responses.get_evaluation_store", lambda: evaluation_store
     )
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_user_store", lambda: UserStore(tmp_path / "resolve.db")
+    )
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_session_store", lambda: session_store
+    )
 
     case_id = case_store.create_case(
         "session-resp-api",
+        user_id=user["id"],
         title="Rejected warranty claim",
         category="warranty",
         description="ASUS refused coverage.",
@@ -40,6 +56,9 @@ def env(tmp_path, monkeypatch):
         "evaluation_store": evaluation_store,
     }
     env["client"] = TestClient(app)
+    env["client"].cookies.set(
+        COOKIE_NAME, issue_auth_token(session_store, user["id"])
+    )
     return env
 
 

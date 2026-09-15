@@ -25,6 +25,8 @@ from backend.services.action_store import ACTION_TYPES
 
 logger = logging.getLogger(__name__)
 
+PREPARER_MAX_ATTEMPTS = 3
+
 PREPARER_SYSTEM_PROMPT = """\
 You are a follow-up action planner for a consumer support case resolver.
 Your ONLY job is to read the supplied case data, response history, previous
@@ -196,19 +198,56 @@ def validate_prepared_action(data: dict) -> PreparedActionResult:
 
 def _extract_json(text: str) -> dict:
     """Defensively extract a JSON object from model text output."""
-    text = text.strip()
     if text.startswith("{"):
-        return json.loads(text)
+        data = json.loads(text.strip())
+    else:
+        fence_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
+        if fence_match:
+            data = json.loads(fence_match.group(1).strip())
+        else:
+            brace_match = re.search(r"\{[^{}]*\}", text, re.DOTALL)
+            if brace_match:
+                data = json.loads(brace_match.group(0))
+            else:
+                raise ValueError(f"no JSON object found in model output: {text[:200]!r}")
+    if not isinstance(data, dict):
+        raise ValueError(f"expected a JSON object, got {type(data).__name__}: {text[:200]!r}")
+    return data
 
-    fence_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
-    if fence_match:
-        return json.loads(fence_match.group(1).strip())
 
-    brace_match = re.search(r"\{[^{}]*\}", text, re.DOTALL)
-    if brace_match:
-        return json.loads(brace_match.group(0))
+def _retry_instruction(last_output: str) -> str:
+    """Remind the model to return ONLY the structured JSON object on retry."""
+    snippet = last_output.strip()[:400] or "(empty)"
+    return (
+        "\n\nNOTE: Your previous response could not be parsed as a JSON object "
+        "and was NOT used. It was:\n"
+        f"<{snippet}>\n\n"
+        "Return ONLY a single JSON object with exactly these fields: "
+        '{"type": "<one of: warranty_dispute, refund_request, return_request, '
+        'escalation, other>", "title": "<short human-readable title>", '
+        '"reason": "<one or two sentences>", '
+        '"content": "<prepared message text>", '
+        '"target": "<optional recipient or channel>"}. '
+        "Do NOT include markdown fences, explanations, or any other text such as "
+        "safety annotations. The entire response must be the JSON object."
+    )
 
-    raise ValueError(f"no JSON object found in model output: {text[:200]!r}")
+
+def _extract_model_text(result) -> str:
+    """Return the plain text blocks from a strands agent result message."""
+    content_obj = result.message
+    if content_obj is None:
+        return ""
+    if isinstance(content_obj, dict):
+        blocks = content_obj.get("content", [])
+    else:
+        blocks = content_obj.content if hasattr(content_obj, "content") else []
+    parts = []
+    for block in blocks:
+        text_val = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
+        if text_val:
+            parts.append(text_val)
+    return "".join(parts)
 
 
 # --- Main preparer ---
@@ -266,26 +305,28 @@ def prepare_followup_action(
             tools=[],
         )
 
-    result = agent(prompt)
+    last_error = "model returned empty response"
+    for attempt in range(1, PREPARER_MAX_ATTEMPTS + 1):
+        result = agent(prompt)
+        raw_text = _extract_model_text(result)
 
-    raw_text = ""
-    content_obj = result.message
-    if content_obj is not None:
-        if isinstance(content_obj, dict):
-            blocks = content_obj.get("content", [])
+        if not raw_text.strip():
+            last_error = "model returned empty response"
         else:
-            blocks = content_obj.content if hasattr(content_obj, "content") else []
-        for block in blocks:
-            text_val = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
-            if text_val:
-                raw_text += text_val
+            try:
+                data = _extract_json(raw_text)
+            except (json.JSONDecodeError, ValueError) as exc:
+                last_error = f"failed to parse model output: {exc}"
+            else:
+                try:
+                    return validate_prepared_action(data)
+                except ValueError as exc:
+                    last_error = str(exc)
 
-    if not raw_text.strip():
-        raise ValueError("model returned empty response")
+        if attempt < PREPARER_MAX_ATTEMPTS:
+            prompt = prompt + _retry_instruction(raw_text)
 
-    try:
-        data = _extract_json(raw_text)
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise ValueError(f"failed to parse model output: {exc}") from exc
-
-    return validate_prepared_action(data)
+    raise ValueError(
+        f"model output invalid after {PREPARER_MAX_ATTEMPTS} attempts; "
+        f"no follow-up action was created ({last_error})"
+    )

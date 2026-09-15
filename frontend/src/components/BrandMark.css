@@ -1,0 +1,61 @@
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: #172033;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  white-space: nowrap;
+  text-decoration: none;
+  opacity: 1;
+}
+
+.brand-mark__svg {
+  flex-shrink: 0;
+  display: block;
+  opacity: 1;
+}
+
+.brand-mark__text {
+  display: inline-block;
+  color: #172033;
+  opacity: 1;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.brand-mark--sm .brand-mark__text {
+  font-size: var(--text-sm);
+}
+
+.brand-mark--md .brand-mark__text {
+  font-size: var(--text-base);
+}
+
+.brand-mark--lg .brand-mark__text {
+  font-size: var(--text-lg);
+}
+
+.brand-mark--xl .brand-mark__text {
+  font-size: var(--text-xl);
+}
+
+.brand-mark--light {
+  color: var(--color-primary-contrast);
+}
+
+.brand-mark--light .brand-mark__text {
+  color: var(--color-primary-contrast);
+}
+
+.brand-mark--light .brand-mark__svg rect {
+  fill: rgba(255, 255, 255, 0.18);
+}
+
+.brand-mark--light .brand-mark__svg path:first-of-type {
+  fill: var(--color-primary-contrast);
+}
+
+.brand-mark--light .brand-mark__svg path:last-child {
+  stroke: var(--color-primary-contrast);
+}

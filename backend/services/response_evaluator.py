@@ -60,6 +60,23 @@ RULES:
    information is missing.
 7. Never claim a case is resolved without evidence.
 8. Never invent a refund, approval, rejection, or any external action.
+9. The LATEST response is the primary evidence of what the company says it has
+   done.  Structured case fields are internal bookkeeping and may lag behind it.
+10. Workflow bookkeeping fields (such as a stored status or next_action) are NOT
+    facts about what the company actually did.  Values like a pending status or
+    "awaiting further details" simply mean the app has not yet processed the
+    latest response; they must never override the latest response.
+11. Use 'resolved' when the latest response states that the requested outcome
+    was genuinely completed or closed - for example a replacement was
+    delivered, a refund was issued, a repair was completed, the case was
+    closed, or "no further action is required" - and the account otherwise
+    matches the case facts.  Do not require an explicit sentence from the user.
+12. Do NOT use 'resolved' for: an approval, promise, or commitment WITHOUT
+    completion ("approved", "we will ship", "will process", "will issue");
+    a request for the user to take an action ("please confirm delivery",
+    "please visit the service center", "provide documents"); a partial or
+    conditional offer; or any statement that still requires a further action
+    to finish the resolution.  Those are 'needs_follow_up'.
 
 Return ONLY the JSON object.  No other text."""
 
@@ -108,8 +125,6 @@ def build_evaluation_context(case: dict, responses: list[dict]) -> str:
         "seller",
         "warranty_expiry",
         "rejection_reason",
-        "status",
-        "next_action",
     ):
         val = case.get(key)
         if val is not None and val != "":
@@ -137,7 +152,10 @@ def build_evaluation_context(case: dict, responses: list[dict]) -> str:
         f"=== RESPONSE HISTORY ({len(responses)} total) ===\n{history_text}\n\n"
         f"=== LATEST RESPONSE (from: {latest_source}) ===\n{latest_text}\n\n"
         f"=== CONTEXT ===\n"
-        f"Current case status: {case.get('status', 'unknown')}\n"
+        f"Workflow status (internal bookkeeping ONLY - indicates the latest "
+        f"response is awaiting evaluation; NOT evidence about what the company "
+        f"actually did, and may lag the latest response): "
+        f"{case.get('status', 'unknown')}\n"
         f"Number of prior responses: {len(responses) - 1 if responses else 0}\n"
         f"This is a {'follow-up' if is_followup else 'first'} response.\n"
     )

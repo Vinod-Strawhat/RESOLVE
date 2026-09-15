@@ -6,19 +6,25 @@ import pytest
 from backend.agent.resolve_agent import RESOLVE_TOOLS
 from backend.services.action_store import ActionStore
 from backend.services.case_store import CaseStore
+from backend.services.user_store import UserStore
+from conftest import create_test_user
 
 
-def _tool_context(session_id):
-    return SimpleNamespace(invocation_state={"session_id": session_id})
+def _tool_context(user_id, session_id):
+    return SimpleNamespace(
+        invocation_state={"user_id": user_id, "session_id": session_id}
+    )
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
+    user_id = create_test_user(UserStore(tmp_path / "resolve.db"))["id"]
     case_store = CaseStore(tmp_path / "resolve.db")
     action_store = ActionStore(tmp_path / "resolve.db")
     session_id = "session-xyz"
     case_id = case_store.create_case(
         session_id,
+        user_id=user_id,
         title="Rejected warranty claim",
         category="warranty",
         description="ASUS refused coverage of a laptop.",
@@ -30,6 +36,7 @@ def env(tmp_path, monkeypatch):
     return {
         "session_id": session_id,
         "case_id": case_id,
+        "user_id": user_id,
         "action_store": action_store,
         "case_store": case_store,
     }
@@ -46,7 +53,9 @@ def _call_prepare(env, **overrides):
         "target": "ASUS Support",
     }
     args.update(overrides)
-    result = prepare_action(_tool_context(env["session_id"]), **args)
+    result = prepare_action(
+        _tool_context(env["user_id"], env["session_id"]), **args
+    )
     return result, json.loads(result)
 
 
@@ -69,7 +78,13 @@ def test_prepare_action_with_active_case(env):
 def test_prepare_action_no_session_returns_error(env, monkeypatch):
     from backend.tools.actions import prepare_action
 
-    result = prepare_action(_tool_context(None), type="warranty_dispute", title="T", reason="R", content="C")
+    result = prepare_action(
+        _tool_context(env["user_id"], None),
+        type="warranty_dispute",
+        title="T",
+        reason="R",
+        content="C",
+    )
     body = json.loads(result)
     assert body["status"] == "error"
 
@@ -77,7 +92,9 @@ def test_prepare_action_no_session_returns_error(env, monkeypatch):
 def test_prepare_action_no_case_returns_error(env, monkeypatch):
     from backend.tools.actions import prepare_action
 
-    ctx = SimpleNamespace(invocation_state={"session_id": "no-case-session"})
+    ctx = SimpleNamespace(
+        invocation_state={"user_id": env["user_id"], "session_id": "no-case-session"}
+    )
     result = prepare_action(ctx, type="warranty_dispute", title="T", reason="R", content="C")
     body = json.loads(result)
     assert body["status"] == "error"

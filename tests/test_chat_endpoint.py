@@ -6,12 +6,32 @@ from fastapi.testclient import TestClient
 from backend.agent.resolve_agent import _make_tool_recorder
 from backend.api.agent import ToolActivity
 from backend.main import app
+from backend.services.auth import COOKIE_NAME
 from backend.services.case_store import CaseStore
 from backend.services.memory_store import MemoryStore
+from backend.services.session_store import SessionStore
+from backend.services.user_store import UserStore
+from conftest import create_test_user, issue_auth_token
 
 import backend.api.agent as agent_module
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def auth_env(tmp_path, monkeypatch):
+    db = tmp_path / "resolve.db"
+    user_store = UserStore(db)
+    user = create_test_user(user_store)
+    session_store = SessionStore(db)
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_user_store", lambda: user_store
+    )
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_session_store", lambda: session_store
+    )
+    client.cookies.set(COOKIE_NAME, issue_auth_token(session_store, user["id"]))
+    return {"user_id": user["id"], "session_store": session_store}
 
 
 @pytest.fixture
@@ -138,8 +158,10 @@ def test_tool_activity_response_shape():
 class CaseCreatingFakeAgent(FakeAgent):
     def __call__(self, prompt, **kwargs):
         session_id = kwargs.get("invocation_state", {}).get("session_id")
+        user_id = kwargs.get("invocation_state", {}).get("user_id")
         agent_module.get_case_store().create_case(
             session_id,
+            user_id=user_id,
             title="Rejected warranty claim",
             category="warranty",
             description="Company refused coverage.",
@@ -177,6 +199,7 @@ def test_chat_returns_case_id_when_agent_creates_case(tmp_path, monkeypatch):
 def test_chat_returns_case_id_for_existing_case(tmp_path, monkeypatch):
     cases = CaseStore(tmp_path / "resolve.db")
     store = MemoryStore(tmp_path / "resolve.db")
+    user_id = create_test_user(UserStore(tmp_path / "resolve.db"))["id"]
     monkeypatch.setattr("backend.api.agent.get_memory_store", lambda: store)
     monkeypatch.setattr("backend.api.agent.get_case_store", lambda: cases)
     monkeypatch.setattr(
@@ -187,6 +210,7 @@ def test_chat_returns_case_id_for_existing_case(tmp_path, monkeypatch):
     session_id = first.json()["session_id"]
     case_id = cases.create_case(
         session_id,
+        user_id=user_id,
         title="Existing case",
         category="refund",
         description="Description",

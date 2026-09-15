@@ -1,8 +1,13 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from backend.api.dependencies import (
+    get_case_or_404_for_user,
+    get_current_user,
+    require_same_origin,
+)
 from backend.services.case_store import (
     EVALUATION_OUTCOMES,
     get_case_store,
@@ -40,15 +45,13 @@ class EvaluateRequest(BaseModel):
     next_step: str = ""
 
 
-def _case_or_404(case_id: str) -> dict:
-    case = get_case_store().get_case(case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="case not found")
-    return case
-
-
 @router.post("/{case_id}/responses")
-def record_response(case_id: str, request: RecordResponseRequest) -> dict:
+def record_response(
+    case_id: str,
+    request: RecordResponseRequest,
+    user: dict = Depends(get_current_user),
+    _same_origin: None = Depends(require_same_origin),
+) -> dict:
     source = (request.source or "").strip()
     content = (request.content or "").strip()
     if not content:
@@ -56,7 +59,7 @@ def record_response(case_id: str, request: RecordResponseRequest) -> dict:
     if not source:
         raise HTTPException(status_code=400, detail="response source must not be empty")
 
-    case = _case_or_404(case_id)
+    case = get_case_or_404_for_user(case_id, user["id"])
     if case["status"] not in RESPONSEABLE_STATUSES:
         raise HTTPException(
             status_code=409,
@@ -74,21 +77,32 @@ def record_response(case_id: str, request: RecordResponseRequest) -> dict:
 
 
 @router.get("/{case_id}/responses")
-def list_responses(case_id: str) -> dict:
-    _case_or_404(case_id)
+def list_responses(
+    case_id: str,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    get_case_or_404_for_user(case_id, user["id"])
     responses = get_response_store().list_responses_for_case(case_id)
     return {"case_id": case_id, "responses": responses}
 
 
 @router.get("/{case_id}/evaluations")
-def list_evaluations(case_id: str) -> dict:
-    _case_or_404(case_id)
+def list_evaluations(
+    case_id: str,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    get_case_or_404_for_user(case_id, user["id"])
     evaluations = get_evaluation_store().list_evaluations_for_case(case_id)
     return {"case_id": case_id, "evaluations": evaluations}
 
 
 @router.post("/{case_id}/evaluate")
-def evaluate_case(case_id: str, request: EvaluateRequest) -> dict:
+def evaluate_case(
+    case_id: str,
+    request: EvaluateRequest,
+    user: dict = Depends(get_current_user),
+    _same_origin: None = Depends(require_same_origin),
+) -> dict:
     outcome = (request.outcome or "").strip()
     if outcome not in EVALUATION_OUTCOMES:
         raise HTTPException(
@@ -99,7 +113,7 @@ def evaluate_case(case_id: str, request: EvaluateRequest) -> dict:
             ),
         )
 
-    case = _case_or_404(case_id)
+    case = get_case_or_404_for_user(case_id, user["id"])
     if case["status"] != "response_received":
         raise HTTPException(
             status_code=409,
@@ -130,7 +144,11 @@ def evaluate_case(case_id: str, request: EvaluateRequest) -> dict:
 
 
 @router.post("/{case_id}/evaluate-response")
-def evaluate_response_ai(case_id: str) -> dict:
+def evaluate_response_ai(
+    case_id: str,
+    user: dict = Depends(get_current_user),
+    _same_origin: None = Depends(require_same_origin),
+) -> dict:
     """AI-powered response evaluation.
 
     Invokes the Strands evaluator to analyse the case and response history,
@@ -141,7 +159,7 @@ def evaluate_response_ai(case_id: str) -> dict:
     ``human_intervention``).
     """
     case_store = get_case_store()
-    case = _case_or_404(case_id)
+    case = get_case_or_404_for_user(case_id, user["id"])
 
     if case["status"] != "response_received":
         raise HTTPException(
@@ -170,6 +188,25 @@ def evaluate_response_ai(case_id: str) -> dict:
             detail="evaluation service error",
         ) from exc
 
+    outcome = result.outcome
+    followup_store = get_followup_store()
+    max_followups = get_max_followups()
+    followup_count = followup_store.get_followup_count(case_id)
+
+    # Marker reflects the follow-up state AT evaluation time, before any attempt
+    # is recorded for this evaluation (deterministic regardless of increment
+    # order).  Only AI evaluations carry a marker.
+    if outcome == "resolved":
+        followup_marker = "resolved"
+    elif outcome == "human_intervention":
+        followup_marker = "permanently_blocked"
+    else:
+        followup_marker = (
+            "exhausted/overflowed"
+            if followup_count >= max_followups
+            else "awaiting"
+        )
+
     try:
         get_evaluation_store().record_evaluation(
             case_id,
@@ -178,6 +215,7 @@ def evaluate_response_ai(case_id: str) -> dict:
             confidence=result.confidence,
             reason=result.reason,
             next_step=result.next_step,
+            followup_marker=followup_marker,
         )
     except Exception as exc:
         logger.exception("failed to persist ai evaluation")
@@ -186,10 +224,6 @@ def evaluate_response_ai(case_id: str) -> dict:
             detail="failed to persist evaluation record",
         ) from exc
 
-    outcome = result.outcome
-    followup_store = get_followup_store()
-    max_followups = get_max_followups()
-    followup_count = followup_store.get_followup_count(case_id)
     followup_used = False
 
     if outcome == "needs_follow_up":
@@ -215,6 +249,7 @@ def evaluate_response_ai(case_id: str) -> dict:
             "confidence": result.confidence,
             "reason": result.reason,
             "next_step": result.next_step,
+            "followup_marker": followup_marker,
         },
         "followup": {
             "count": followup_count,
@@ -228,9 +263,12 @@ def evaluate_response_ai(case_id: str) -> dict:
 
 
 @router.get("/{case_id}/followup-status")
-def followup_status(case_id: str) -> dict:
+def followup_status(
+    case_id: str,
+    user: dict = Depends(get_current_user),
+) -> dict:
     """Return follow-up attempt information for a case."""
-    case = _case_or_404(case_id)
+    case = get_case_or_404_for_user(case_id, user["id"])
     followup_store = get_followup_store()
     count = followup_store.get_followup_count(case_id)
     max_followups = get_max_followups()
@@ -246,7 +284,11 @@ def followup_status(case_id: str) -> dict:
 
 
 @router.post("/{case_id}/prepare-followup")
-def prepare_followup(case_id: str) -> dict:
+def prepare_followup(
+    case_id: str,
+    user: dict = Depends(get_current_user),
+    _same_origin: None = Depends(require_same_origin),
+) -> dict:
     """Prepare the next follow-up action for a case awaiting follow-up.
 
     The AI only recommends the action.  The backend validates the suggestion,
@@ -254,7 +296,7 @@ def prepare_followup(case_id: str) -> dict:
     mandatory before any execution.
     """
     case_store = get_case_store()
-    case = _case_or_404(case_id)
+    case = get_case_or_404_for_user(case_id, user["id"])
 
     if case["status"] != "needs_follow_up":
         raise HTTPException(

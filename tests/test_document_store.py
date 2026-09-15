@@ -11,12 +11,16 @@ from backend.services.document_store import (
 
 
 @pytest.fixture
-def store(tmp_path):
+def store(tmp_path, user):
     cases = CaseStore(tmp_path / "resolve.db")
     doc_store = DocumentStore(tmp_path / "resolve.db", tmp_path / "uploads")
     doc_store.case_ids = [
         cases.create_case(
-            f"session-{index}", title=f"T{index}", category="warranty", description="D"
+            f"session-{index}",
+            user_id=user["id"],
+            title=f"T{index}",
+            category="warranty",
+            description="D",
         )["id"]
         for index in range(1, 6)
     ]

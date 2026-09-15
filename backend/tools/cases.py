@@ -6,9 +6,14 @@ from strands.types.tools import ToolContext
 from backend.services.case_store import CaseStore, get_case_store
 
 
-def _resolve_session(tool_context: ToolContext) -> str | None:
+def _resolve_context(tool_context: ToolContext) -> tuple[str, str] | None:
+    """Return ``(session_id, user_id)`` from the invocation state, if both present."""
     invocation_state = tool_context.invocation_state or {}
-    return invocation_state.get("session_id")
+    session_id = invocation_state.get("session_id")
+    user_id = invocation_state.get("user_id")
+    if not session_id or not user_id:
+        return None
+    return session_id, user_id
 
 
 def _store() -> CaseStore:
@@ -38,14 +43,16 @@ def create_case(
     Returns:
         A JSON string describing the created case or an error message.
     """
-    session_id = _resolve_session(tool_context)
-    if not session_id:
+    resolved = _resolve_context(tool_context)
+    if resolved is None:
         return '{"status": "error", "message": "no active session for case creation"}'
+    session_id, user_id = resolved
     if not (title and title.strip() and category and category.strip() and description and description.strip()):
         return '{"status": "error", "message": "title, category and description must not be empty"}'
     try:
         case = _store().create_case(
             session_id,
+            user_id=user_id,
             title=title.strip(),
             category=category.strip(),
             description=description.strip(),
@@ -81,6 +88,13 @@ def update_case(
         return '{"status": "error", "message": "case_id must not be empty"}'
     if not updates:
         return '{"status": "error", "message": "updates must not be empty"}'
+    resolved = _resolve_context(tool_context)
+    if resolved is None:
+        return '{"status": "error", "message": "no active session for case update"}'
+    _, user_id = resolved
+    case = _store().get_case(case_id.strip())
+    if case is None or case.get("user_id") != user_id:
+        return '{"status": "error", "message": "case not found"}'
     try:
         updated = _store().update_case(case_id.strip(), {str(k): str(v) for k, v in updates.items()})
     except ValueError as exc:

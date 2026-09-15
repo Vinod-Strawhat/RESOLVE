@@ -4,13 +4,19 @@ from fastapi.testclient import TestClient
 from backend.main import app
 from backend.services.action_executor import ActionExecutor
 from backend.services.action_store import ActionStore
+from backend.services.auth import COOKIE_NAME
 from backend.services.case_store import CaseStore
 from backend.services.response_evaluator import EvaluationOutcome
 from backend.services.response_store import ResponseStore
+from backend.services.session_store import SessionStore
+from backend.services.user_store import UserStore
+from conftest import create_test_user, issue_auth_token
 
 
 def _new_stores(tmp_path):
     db = tmp_path / "resolve.db"
+    user = create_test_user(UserStore(db))
+    session_store = SessionStore(db)
     case_store = CaseStore(db)
     action_store = ActionStore(db)
     response_store = ResponseStore(db)
@@ -18,12 +24,20 @@ def _new_stores(tmp_path):
     followup_store = FollowupStore(db)
     from backend.services.evaluation_store import EvaluationStore
     evaluation_store = EvaluationStore(db)
-    return case_store, action_store, response_store, followup_store, evaluation_store
+    return (
+        case_store,
+        action_store,
+        response_store,
+        followup_store,
+        evaluation_store,
+        user,
+        session_store,
+    )
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    case_store, action_store, response_store, followup_store, evaluation_store = (
+    case_store, action_store, response_store, followup_store, evaluation_store, user, session_store = (
         _new_stores(tmp_path)
     )
 
@@ -38,20 +52,24 @@ def env(tmp_path, monkeypatch):
             "backend.api.case_responses.get_evaluation_store", lambda: evaluation_store
         )
         monkeypatch.setattr(
-            "backend.api.actions.get_case_store", lambda: case_store
-        )
-        monkeypatch.setattr(
             "backend.api.actions.get_action_store", lambda: action_store
         )
         monkeypatch.setattr(
             "backend.api.actions.get_executor",
             lambda: ActionExecutor(action_store, case_store),
         )
+        monkeypatch.setattr(
+            "backend.api.dependencies.get_case_store", lambda: case_store
+        )
+        monkeypatch.setattr(
+            "backend.api.dependencies.get_action_store", lambda: action_store
+        )
 
     _patch()
 
     case_id = case_store.create_case(
         "session-followup",
+        user_id=user["id"],
         title="Rejected warranty claim",
         category="warranty",
         description="ASUS refused coverage.",
@@ -64,7 +82,16 @@ def env(tmp_path, monkeypatch):
         "followup_store": followup_store,
         "evaluation_store": evaluation_store,
     }
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_user_store", lambda: UserStore(tmp_path / "resolve.db")
+    )
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_session_store", lambda: session_store
+    )
     env["client"] = TestClient(app)
+    env["client"].cookies.set(
+        COOKIE_NAME, issue_auth_token(session_store, user["id"])
+    )
     return env
 
 
@@ -442,6 +469,36 @@ def test_prepare_followup_wrong_state_409(env, monkeypatch):
     assert response.status_code == 409
 
 
+def test_prepare_followup_safety_classification_fails_safely(env, monkeypatch):
+    """The real preparer must reject safety-only model output (422, no action)."""
+    _to_response_received(env)
+    _patch_ai_evaluator(monkeypatch, "needs_follow_up")
+    env["client"].post(f"/api/cases/{env['case_id']}/evaluate-response")
+
+    class SafetyOnlyAgent:
+        def __init__(self, model, system_prompt, tools):
+            pass
+
+        def __call__(self, prompt):
+            class _Message:
+                def __init__(self):
+                    self.message = {
+                        "content": [{"text": "User Safety: safe\nResponse Safety: safe"}]
+                    }
+
+            return _Message()
+
+    monkeypatch.setattr("strands.Agent", SafetyOnlyAgent)
+
+    response = env["client"].post(
+        f"/api/cases/{env['case_id']}/prepare-followup"
+    )
+    assert response.status_code == 422
+    assert "no follow-up action was created" in response.json()["detail"]
+    assert env["action_store"].list_actions_for_case(env["case_id"]) == []
+    assert env["case_store"].get_case(env["case_id"])["status"] == "needs_follow_up"
+
+
 def test_prepare_followup_unknown_case_404(env, monkeypatch):
     _patch_preparer(monkeypatch)
     assert env["client"].post("/api/cases/missing/prepare-followup").status_code == 404
@@ -482,3 +539,91 @@ def test_failed_execution_does_not_advance_case(env, monkeypatch):
 
 def test_followup_status_unknown_case_404(env):
     assert env["client"].get("/api/cases/missing/followup-status").status_code == 404
+
+
+# --- Resolution recognition: completed outcome must be honoured even when
+# --- older workflow fields are stale, and must consume no follow-up attempt.
+
+def _last_ai_evaluation(env):
+    records = env["evaluation_store"].list_evaluations_for_case(env["case_id"])
+    assert records, "expected at least one evaluation record"
+    return records[-1]
+
+
+def test_ai_resolved_clears_stale_next_action(env, monkeypatch):
+    _to_response_received(env)
+    env["case_store"].update_case(
+        env["case_id"], {"next_action": "awaiting further details from user"}
+    )
+    _patch_ai_evaluator(monkeypatch, "resolved")
+    response = env["client"].post(
+        f"/api/cases/{env['case_id']}/evaluate-response"
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["case"]["status"] == "resolved"
+    assert body["case"]["next_action"] == ""
+    assert body["evaluation"]["followup_marker"] == "resolved"
+    assert _last_ai_evaluation(env)["followup_marker"] == "resolved"
+    assert env["followup_store"].get_followup_count(env["case_id"]) == 0
+
+
+def test_ai_resolved_does_not_increment_followup_count(env, monkeypatch):
+    _to_response_received(env)
+    _drive_full_followup_cycle(env, monkeypatch)
+    _drive_full_followup_cycle(env, monkeypatch)
+    assert env["followup_store"].get_followup_count(env["case_id"]) == 2
+
+    _patch_ai_evaluator(monkeypatch, "resolved")
+    response = env["client"].post(
+        f"/api/cases/{env['case_id']}/evaluate-response"
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["case"]["status"] == "resolved"
+    assert body["followup"]["count"] == 2
+    assert body["followup"]["followup_used"] is False
+    assert env["followup_store"].get_followup_count(env["case_id"]) == 2
+    assert _last_ai_evaluation(env)["followup_marker"] == "resolved"
+
+
+def test_ai_needs_followup_marker_awaiting(env, monkeypatch):
+    _to_response_received(env)
+    _patch_ai_evaluator(monkeypatch, "needs_follow_up")
+    response = env["client"].post(
+        f"/api/cases/{env['case_id']}/evaluate-response"
+    )
+    assert response.status_code == 200
+    assert response.json()["evaluation"]["followup_marker"] == "awaiting"
+    assert _last_ai_evaluation(env)["followup_marker"] == "awaiting"
+
+
+def test_ai_overflow_marker_exhausted(env, monkeypatch):
+    _to_response_received(env)
+    for _ in range(3):
+        _drive_full_followup_cycle(env, monkeypatch)
+    assert env["followup_store"].get_followup_count(env["case_id"]) == 3
+
+    _patch_ai_evaluator(monkeypatch, "needs_follow_up")
+    response = env["client"].post(
+        f"/api/cases/{env['case_id']}/evaluate-response"
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["case"]["status"] == "human_intervention"
+    assert body["evaluation"]["followup_marker"] == "exhausted/overflowed"
+    assert _last_ai_evaluation(env)["followup_marker"] == "exhausted/overflowed"
+    assert body["followup"]["overflowed_to_human_intervention"] is True
+
+
+def test_ai_human_intervention_marker_permanently_blocked(env, monkeypatch):
+    _to_response_received(env)
+    _patch_ai_evaluator(monkeypatch, "human_intervention")
+    response = env["client"].post(
+        f"/api/cases/{env['case_id']}/evaluate-response"
+    )
+    assert response.status_code == 200
+    assert response.json()["case"]["status"] == "human_intervention"
+    assert response.json()["evaluation"]["followup_marker"] == "permanently_blocked"
+    assert _last_ai_evaluation(env)["followup_marker"] == "permanently_blocked"
+    assert env["followup_store"].get_followup_count(env["case_id"]) == 0

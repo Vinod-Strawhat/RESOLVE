@@ -12,6 +12,11 @@ def _resolve_session(tool_context: ToolContext) -> str | None:
     return invocation_state.get("session_id")
 
 
+def _resolve_user_id(tool_context: ToolContext) -> str | None:
+    invocation_state = tool_context.invocation_state or {}
+    return invocation_state.get("user_id")
+
+
 def _case_store() -> CaseStore:
     return get_case_store()
 
@@ -54,11 +59,12 @@ def prepare_action(
         error message.
     """
     session_id = _resolve_session(tool_context)
-    if not session_id:
+    user_id = _resolve_user_id(tool_context)
+    if not session_id or not user_id:
         return '{"status": "error", "message": "no active session for action preparation"}'
 
     case = _case_store().get_case_by_session(session_id)
-    if case is None:
+    if case is None or case.get("user_id") != user_id:
         return '{"status": "error", "message": "no active case; create a case before preparing an action"}'
 
     if type not in ACTION_TYPES:

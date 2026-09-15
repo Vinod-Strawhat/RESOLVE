@@ -37,6 +37,10 @@ CREATE INDEX IF NOT EXISTS idx_messages_session_created
     ON messages (session_id, created_at);
 """
 
+_INDEXES_DDL = """
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions (user_id);
+"""
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -50,6 +54,17 @@ class MemoryStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+        self._ensure_user_columns()
+
+    def _ensure_user_columns(self) -> None:
+        """Add user_id column and index to sessions if missing (Phase 8B)."""
+        with self._connect() as conn:
+            existing = {
+                row["name"] for row in conn.execute("PRAGMA table_info(sessions)")
+            }
+            if "user_id" not in existing:
+                conn.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT")
+            conn.executescript(_INDEXES_DDL)
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path, timeout=5.0)
@@ -61,12 +76,12 @@ class MemoryStore:
         with self._connect() as conn:
             conn.execute(sql, params)
 
-    def create_session(self) -> str:
+    def create_session(self, *, user_id: str | None = None) -> str:
         session_id = uuid.uuid4().hex
         now = _now()
         self._execute(
-            "INSERT INTO sessions (id, created_at, updated_at) VALUES (?, ?, ?)",
-            (session_id, now, now),
+            "INSERT INTO sessions (id, user_id, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (session_id, user_id, now, now),
         )
         return session_id
 
@@ -76,7 +91,7 @@ class MemoryStore:
     def get_session(self, session_id: str) -> dict | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT id, created_at, updated_at FROM sessions WHERE id = ?",
+                "SELECT id, user_id, created_at, updated_at FROM sessions WHERE id = ?",
                 (session_id,),
             ).fetchone()
         return dict(row) if row else None
@@ -117,6 +132,19 @@ class MemoryStore:
                 (session_id, limit),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def claim_unowned_sessions(self, user_id: str) -> int:
+        """Assign ``user_id`` to every session without an owner (idempotent).
+
+        Used by the Phase 8B legacy migration to backfill pre-existing rows.
+        Returns the number of sessions claimed.
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE sessions SET user_id = ? WHERE user_id IS NULL OR user_id = ''",
+                (user_id,),
+            )
+        return cursor.rowcount
 
 
 _store: MemoryStore | None = None

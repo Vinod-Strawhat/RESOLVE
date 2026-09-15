@@ -3,16 +3,22 @@ from fastapi.testclient import TestClient
 
 from backend.main import app
 from backend.services.action_store import ActionStore
+from backend.services.auth import COOKIE_NAME
 from backend.services.case_history import build_case_history
 from backend.services.case_store import CaseStore
 from backend.services.evaluation_store import EvaluationStore
 from backend.services.followup_store import FollowupStore
 from backend.services.response_store import ResponseStore
+from backend.services.session_store import SessionStore
+from backend.services.user_store import UserStore
+from conftest import create_test_user, issue_auth_token
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     db = tmp_path / "resolve.db"
+    user = create_test_user(UserStore(db))
+    session_store = SessionStore(db)
     case_store = CaseStore(db)
     response_store = ResponseStore(db)
     evaluation_store = EvaluationStore(db)
@@ -20,6 +26,9 @@ def env(tmp_path, monkeypatch):
     followup_store = FollowupStore(db)
 
     monkeypatch.setattr("backend.api.history.get_case_store", lambda: case_store)
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_case_store", lambda: case_store
+    )
     monkeypatch.setattr("backend.api.history.get_response_store", lambda: response_store)
     monkeypatch.setattr(
         "backend.api.history.get_evaluation_store", lambda: evaluation_store
@@ -28,10 +37,17 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "backend.api.history.get_followup_store", lambda: followup_store
     )
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_user_store", lambda: UserStore(db)
+    )
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_session_store", lambda: session_store
+    )
 
     def _new_case(session_id):
         return case_store.create_case(
             session_id,
+            user_id=user["id"],
             title="Rejected warranty claim",
             category="warranty",
             description="ASUS refused coverage.",
@@ -48,6 +64,9 @@ def env(tmp_path, monkeypatch):
         "_new_case": _new_case,
     }
     env["client"] = TestClient(app)
+    env["client"].cookies.set(
+        COOKIE_NAME, issue_auth_token(session_store, user["id"])
+    )
     return env
 
 

@@ -1,10 +1,16 @@
 import json
 import logging
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from backend.agent.resolve_agent import build_resolve_agent
+from backend.api.dependencies import (
+    get_case_or_404_for_user,
+    get_current_user,
+    require_same_origin,
+)
 from backend.services.case_store import get_case_store
+from backend.services.followup_store import get_followup_store
 from backend.services.conversation import load_session_history, to_agent_transcript
 from backend.services.document_store import (
     InvalidUploadError,
@@ -55,12 +61,36 @@ def _extract_response_text(result) -> str:
     return " ".join(parts).strip()
 
 
+@router.get("")
+def list_my_cases(
+    user: dict = Depends(get_current_user),
+) -> dict:
+    """Return all cases belonging to the authenticated user, most recently updated first."""
+    cases = get_case_store().list_cases_for_user(user["id"])
+    followup_store = get_followup_store()
+    summaries = []
+    for case in cases:
+        summary = {
+            "id": case["id"],
+            "title": case["title"],
+            "product": case["product"],
+            "seller": case["seller"],
+            "category": case["category"],
+            "status": case["status"],
+            "created_at": case["created_at"],
+            "updated_at": case["updated_at"],
+            "followup_count": followup_store.get_followup_count(case["id"]),
+        }
+        summaries.append(summary)
+    return {"cases": summaries}
+
+
 @router.get("/{case_id}")
-def get_case(case_id: str) -> dict:
-    case_store = get_case_store()
-    case = case_store.get_case(case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="case not found")
+def get_case(
+    case_id: str,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    case = get_case_or_404_for_user(case_id, user["id"])
     documents = get_document_store().list_documents(case_id)
     return {
         "case": case,
@@ -69,11 +99,13 @@ def get_case(case_id: str) -> dict:
 
 
 @router.post("/{case_id}/documents")
-def upload_document(case_id: str, file: UploadFile = File(...)) -> dict:
-    case_store = get_case_store()
-    case = case_store.get_case(case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="case not found")
+def upload_document(
+    case_id: str,
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
+    _same_origin: None = Depends(require_same_origin),
+) -> dict:
+    case = get_case_or_404_for_user(case_id, user["id"])
 
     filename = file.filename or ""
     if not filename:
@@ -120,7 +152,7 @@ def upload_document(case_id: str, file: UploadFile = File(...)) -> dict:
         )
         result = agent(
             prompt=transcript,
-            invocation_state={"session_id": session_id},
+            invocation_state={"session_id": session_id, "user_id": user["id"]},
         )
         response_text = _extract_response_text(result)
         memory.save_message(session_id=session_id, role="assistant", content=response_text)
@@ -138,7 +170,7 @@ def upload_document(case_id: str, file: UploadFile = File(...)) -> dict:
         }
 
     return {
-        "case": case_store.get_case(case_id),
+        "case": get_case_store().get_case(case_id),
         "document": _public_document(document),
         "analysis": analysis,
     }

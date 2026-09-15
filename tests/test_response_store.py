@@ -8,11 +8,12 @@ from backend.services.response_store import (
 
 
 @pytest.fixture
-def env(tmp_path):
+def env(tmp_path, user):
     case_store = CaseStore(tmp_path / "resolve.db")
     response_store = ResponseStore(tmp_path / "resolve.db")
     case_id = case_store.create_case(
         "session-resp",
+        user_id=user["id"],
         title="Rejected warranty claim",
         category="warranty",
         description="ASUS refused coverage.",
@@ -68,11 +69,11 @@ def test_get_response(env):
     assert env["response_store"].get_response("missing") is None
 
 
-def test_restart_persistence(tmp_path):
+def test_restart_persistence(tmp_path, user):
     path = tmp_path / "resolve.db"
     case_store = CaseStore(path)
     case_id = case_store.create_case(
-        "s1", title="A", category="warranty", description="D"
+        "s1", user_id=user["id"], title="A", category="warranty", description="D"
     )["id"]
     ResponseStore(path).create_response(
         case_id, source="simulated_support", content="persisted"

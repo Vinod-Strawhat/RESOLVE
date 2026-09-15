@@ -8,11 +8,18 @@ from backend.services.evaluation_store import EvaluationStore
 from backend.services.followup_store import FollowupStore
 from backend.services.response_evaluator import EvaluationOutcome
 from backend.services.response_store import ResponseStore
+from backend.services.user_store import UserStore
+from backend.services.session_store import SessionStore
+from backend.services.auth import COOKIE_NAME
+from conftest import create_test_user, issue_auth_token
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     db = tmp_path / "resolve.db"
+    user_store = UserStore(db)
+    user = create_test_user(user_store)
+    session_store = SessionStore(db)
     case_store = CaseStore(db)
     action_store = ActionStore(db)
     response_store = ResponseStore(db)
@@ -20,6 +27,9 @@ def env(tmp_path, monkeypatch):
     evaluation_store = EvaluationStore(db)
 
     monkeypatch.setattr("backend.api.case_responses.get_case_store", lambda: case_store)
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_case_store", lambda: case_store
+    )
     monkeypatch.setattr(
         "backend.api.case_responses.get_response_store", lambda: response_store
     )
@@ -30,9 +40,16 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "backend.api.case_responses.get_evaluation_store", lambda: evaluation_store
     )
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_user_store", lambda: user_store
+    )
+    monkeypatch.setattr(
+        "backend.api.dependencies.get_session_store", lambda: session_store
+    )
 
     case_id = case_store.create_case(
         "session-eval-persist",
+        user_id=user["id"],
         title="Rejected warranty claim",
         category="warranty",
         description="ASUS refused coverage.",
@@ -46,6 +63,9 @@ def env(tmp_path, monkeypatch):
         "evaluation_store": evaluation_store,
     }
     env["client"] = TestClient(app)
+    env["client"].cookies.set(
+        COOKIE_NAME, issue_auth_token(session_store, user["id"])
+    )
     return env
 
 
@@ -187,7 +207,27 @@ def test_ai_evaluation_response_shape_unchanged(env, monkeypatch):
         "confidence",
         "reason",
         "next_step",
+        "followup_marker",
     }
+    assert body["evaluation"]["followup_marker"] == "resolved"
+
+
+def test_ai_evaluation_response_marker_awaiting(env, monkeypatch):
+    _to_response_received(env)
+    _patch_ai_evaluator(monkeypatch, "needs_follow_up")
+    response = env["client"].post(
+        f"/api/cases/{env['case_id']}/evaluate-response"
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body["evaluation"].keys()) == {
+        "outcome",
+        "confidence",
+        "reason",
+        "next_step",
+        "followup_marker",
+    }
+    assert body["evaluation"]["followup_marker"] == "awaiting"
 
 
 def test_failed_ai_evaluation_does_not_create_record(env, monkeypatch):

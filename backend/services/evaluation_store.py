@@ -22,6 +22,14 @@ from backend.services.memory_store import default_memory_db_path
 
 EVALUATION_SOURCES = ("manual", "ai")
 
+# Follow-up state of the case at the time an AI evaluation was recorded.
+FOLLOWUP_MARKERS = (
+    "awaiting",  # needs_follow_up outcome, attempt recorded under the max
+    "exhausted/overflowed",  # needs_follow_up outcome, max already reached
+    "permanently_blocked",  # case cannot receive further automated follow-ups
+    "resolved",  # evaluation outcome was resolved
+)
+
 EVALUATIONS_DDL = """
 CREATE TABLE IF NOT EXISTS evaluations (
     id TEXT PRIMARY KEY,
@@ -31,6 +39,7 @@ CREATE TABLE IF NOT EXISTS evaluations (
     reason TEXT,
     next_step TEXT,
     source TEXT NOT NULL,
+    followup_marker TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY (case_id) REFERENCES cases (id)
 );
@@ -58,6 +67,19 @@ class EvaluationStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(EVALUATIONS_DDL)
+            self._ensure_followup_marker(conn)
+
+    @staticmethod
+    def _ensure_followup_marker(conn: sqlite3.Connection) -> None:
+        """Idempotently add the ``followup_marker`` column for existing DBs."""
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(evaluations)")
+        }
+        if "followup_marker" not in columns:
+            conn.execute(
+                "ALTER TABLE evaluations ADD COLUMN followup_marker TEXT"
+            )
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path, timeout=5.0)
@@ -73,6 +95,7 @@ class EvaluationStore:
         "reason",
         "next_step",
         "source",
+        "followup_marker",
         "created_at",
     )
 
@@ -89,6 +112,7 @@ class EvaluationStore:
         confidence: float = 0.0,
         reason: str = "",
         next_step: str = "",
+        followup_marker: str | None = None,
     ) -> dict:
         outcome = outcome.strip()
         source = source.strip()
@@ -101,6 +125,16 @@ class EvaluationStore:
             raise ValueError(
                 f"invalid evaluation source {source!r}; "
                 f"allowed: {', '.join(EVALUATION_SOURCES)}"
+            )
+        if followup_marker is not None and followup_marker not in FOLLOWUP_MARKERS:
+            raise ValueError(
+                f"invalid followup marker {followup_marker!r}; "
+                f"allowed: {', '.join(FOLLOWUP_MARKERS)}"
+            )
+        if source == "manual" and followup_marker is not None:
+            raise ValueError(
+                "followup marker is only recorded for AI evaluations, "
+                f"got source={source!r}"
             )
         try:
             confidence = float(confidence)
@@ -116,13 +150,15 @@ class EvaluationStore:
             "reason": reason.strip(),
             "next_step": next_step.strip(),
             "source": source,
+            "followup_marker": followup_marker,
             "created_at": now,
         }
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO evaluations "
-                "(id, case_id, outcome, confidence, reason, next_step, source, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(id, case_id, outcome, confidence, reason, next_step, "
+                "source, followup_marker, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     evaluation["id"],
                     case_id,
@@ -131,6 +167,7 @@ class EvaluationStore:
                     evaluation["reason"],
                     evaluation["next_step"],
                     source,
+                    followup_marker,
                     now,
                 ),
             )

@@ -24,11 +24,12 @@ class CountingChannel:
 
 
 @pytest.fixture
-def env(tmp_path):
+def env(tmp_path, user):
     case_store = CaseStore(tmp_path / "resolve.db")
     action_store = ActionStore(tmp_path / "resolve.db")
     case_id = case_store.create_case(
         "session-exec",
+        user_id=user["id"],
         title="Rejected warranty claim",
         category="warranty",
         description="ASUS refused coverage.",

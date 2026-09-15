@@ -2,21 +2,26 @@ import pytest
 
 from backend.services.case_store import CaseStore
 from backend.services.followup_store import FollowupStore, DEFAULT_MAX_FOLLOWUPS
+from backend.services.user_store import UserStore
+from conftest import create_test_user
 
 
 @pytest.fixture
 def store(tmp_path):
     path = tmp_path / "followups.db"
+    user_id = create_test_user(UserStore(path))["id"]
     case_store = CaseStore(path)
     followups = FollowupStore(path)
     followups.case1 = case_store.create_case(
         "session-fu-store",
+        user_id=user_id,
         title="Case one",
         category="warranty",
         description="d1",
     )["id"]
     followups.case2 = case_store.create_case(
         "session-fu-store-2",
+        user_id=user_id,
         title="Case two",
         category="warranty",
         description="d2",
@@ -85,9 +90,11 @@ def test_recorded_fields(store):
 
 def test_restart_persistence(tmp_path):
     path = tmp_path / "followups.db"
+    user_id = create_test_user(UserStore(path))["id"]
     case_store = CaseStore(path)
     case_id = case_store.create_case(
         "session-fu-store",
+        user_id=user_id,
         title="Case one",
         category="warranty",
         description="d",

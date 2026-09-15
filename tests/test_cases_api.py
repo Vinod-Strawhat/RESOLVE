@@ -9,6 +9,10 @@ from backend.main import app
 from backend.services.case_store import CaseStore
 from backend.services.document_store import DocumentStore
 from backend.services.memory_store import MemoryStore
+from backend.services.auth import COOKIE_NAME
+from backend.services.session_store import SessionStore
+from backend.services.user_store import UserStore
+from conftest import create_test_user, issue_auth_token
 
 
 class FakeAgent:
@@ -24,19 +28,31 @@ class FakeAgent:
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     db = tmp_path / "resolve.db"
+    user = create_test_user(UserStore(db))
+    session_store = SessionStore(db)
     cases = CaseStore(db)
     documents = DocumentStore(db, tmp_path / "uploads")
     memory = MemoryStore(db)
     monkeypatch.setattr("backend.api.cases.get_case_store", lambda: cases)
+    monkeypatch.setattr("backend.api.dependencies.get_case_store", lambda: cases)
     monkeypatch.setattr("backend.api.cases.get_document_store", lambda: documents)
     monkeypatch.setattr("backend.api.cases.get_memory_store", lambda: memory)
+    monkeypatch.setattr("backend.api.dependencies.get_user_store", lambda: UserStore(db))
+    monkeypatch.setattr("backend.api.dependencies.get_session_store", lambda: session_store)
     case_id = cases.create_case(
         "session-1",
+        user_id=user["id"],
         title="Rejected warranty claim",
         category="warranty",
         description="Company refused to fix the laptop.",
     )["id"]
-    return {"case_id": case_id, "cases": cases, "memory": memory}
+    return {
+        "case_id": case_id,
+        "cases": cases,
+        "memory": memory,
+        "session_store": session_store,
+        "user_id": user["id"],
+    }
 
 
 @pytest.fixture
@@ -47,7 +63,11 @@ def fake_agent():
 @pytest.fixture
 def client(env, monkeypatch, fake_agent):
     monkeypatch.setattr("backend.api.cases.build_resolve_agent", lambda tool_activity=None: fake_agent)
-    return TestClient(app)
+    client = TestClient(app)
+    client.cookies.set(
+        COOKIE_NAME, issue_auth_token(env["session_store"], env["user_id"])
+    )
+    return client
 
 
 def _upload(client, case_id, filename, content=b"laptop", content_type="text/plain"):
@@ -136,6 +156,85 @@ def test_upload_failure_saves_no_messages(client, env):
     response = _upload(client, env["case_id"], "trololo.pdf", b"%PDF", "text/plain")
     assert response.status_code == 400
     assert env["memory"].list_messages("session-1") == []
+
+
+def test_list_cases_returns_auth_required_401(env):
+    client = TestClient(app)
+    response = client.get("/api/cases")
+    assert response.status_code == 401
+
+
+def test_list_cases_returns_owned_cases(client, env):
+    response = client.get("/api/cases")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["cases"]) == 1
+    case = body["cases"][0]
+    assert case["id"] == env["case_id"]
+    assert case["title"] == "Rejected warranty claim"
+    assert case["category"] == "warranty"
+    assert "session_id" not in case
+    assert "user_id" not in case
+    assert "description" not in case
+    assert "followup_count" in case
+    assert case["followup_count"] == 0
+
+
+def test_list_cases_is_empty_for_new_user(env):
+    empty = env["cases"].list_cases_for_user("new-user-with-no-cases")
+    assert empty == []
+
+
+def test_list_cases_followup_count_included(client, env, monkeypatch):
+    from backend.services.followup_store import FollowupStore
+
+    followup_store = FollowupStore(env["cases"]._path)
+    followup_store.record_followup(env["case_id"], reason="still waiting")
+    monkeypatch.setattr("backend.api.cases.get_followup_store", lambda: followup_store)
+    response = client.get("/api/cases")
+    body = response.json()
+    assert len(body["cases"]) == 1
+    assert body["cases"][0]["followup_count"] == 1
+
+
+def test_list_cases_ordered_most_recently_updated_first(env, client):
+    first = env["cases"].create_case(
+        "session-first",
+        user_id=env["user_id"],
+        title="First claim",
+        category="refund",
+        description="Created first.",
+    )["id"]
+    second = env["cases"].create_case(
+        "session-second",
+        user_id=env["user_id"],
+        title="Second claim",
+        category="refund",
+        description="Created second.",
+    )["id"]
+    third = env["cases"].create_case(
+        "session-third",
+        user_id=env["user_id"],
+        title="Third claim",
+        category="refund",
+        description="Created third.",
+    )["id"]
+
+    def set_updated_at(case_id, value):
+        with env["cases"]._connect() as conn:
+            conn.execute(
+                "UPDATE cases SET updated_at = ? WHERE id = ?", (value, case_id)
+            )
+
+    set_updated_at(second, "2026-05-01T00:00:00+00:00")
+    set_updated_at(third, "2026-05-02T00:00:00+00:00")
+    set_updated_at(first, "2026-05-03T00:00:00+00:00")
+    set_updated_at(env["case_id"], "2026-01-01T00:00:00+00:00")
+
+    response = client.get("/api/cases")
+    body = response.json()
+    ids = [case["id"] for case in body["cases"]]
+    assert ids == [first, third, second, env["case_id"]]
 
 
 def _pdf_bytes(text: str) -> bytes:

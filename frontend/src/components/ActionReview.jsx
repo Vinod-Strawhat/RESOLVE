@@ -1,12 +1,22 @@
 import { useState } from 'react'
 
-function ActionCard({ action, onDecide, onExecute, busy, executeBusy, realSendingEnabled }) {
+function ActionCard({
+  action,
+  onDecide,
+  onExecute,
+  busy,
+  executeBusy,
+  realSendingEnabled,
+  caseResolved,
+}) {
   const isPending = action.status === 'pending_approval'
   const isApproved = action.status === 'approved'
   const isExecuting = action.status === 'executing'
   const isExecuted = action.status === 'executed'
   const isFailed = action.status === 'failed'
   const isRejected = action.status === 'rejected'
+  const historical =
+    caseResolved && (isPending || isApproved || isExecuting)
   const [confirming, setConfirming] = useState(false)
 
   function handleExecuteClick() {
@@ -18,10 +28,14 @@ function ActionCard({ action, onDecide, onExecute, busy, executeBusy, realSendin
   }
 
   return (
-    <article className="action-card">
+    <article
+      className={`action-card${historical ? ' action-card--historical' : ''}`}
+    >
       <div className="action-heading">
         <h3>{action.title}</h3>
-        <span className={`status status-${action.status}`}>{action.status}</span>
+        <span className={`status status-${action.status}`}>
+          {action.status.replace(/_/g, ' ')}
+        </span>
       </div>
       <dl className="action-meta">
         <div>
@@ -43,21 +57,33 @@ function ActionCard({ action, onDecide, onExecute, busy, executeBusy, realSendin
       </p>
       <blockquote className="action-content-box">{action.content}</blockquote>
 
-      {isPending ? (
-        <div className="approval-banner">
-          This action has been prepared by RESOLVE and requires your approval.
+      {historical ? (
+        <div className="approval-result">
+          {isPending
+            ? 'Case resolved — this action was never approved. No action needed.'
+            : isApproved
+              ? 'Case resolved before this action was executed. No action needed.'
+              : 'Action was executing when the case was resolved. No action needed.'}
         </div>
-      ) : null}
+      ) : (
+        <>
+          {isPending ? (
+            <div className="approval-banner">
+              This action has been prepared by RESOLVE and requires your approval.
+            </div>
+          ) : null}
 
-      {isApproved ? (
-        <div className="approval-result approved">
-          Approved — ready for execution.
-        </div>
-      ) : null}
+          {isApproved ? (
+            <div className="approval-result approved">
+              Approved — ready for execution.
+            </div>
+          ) : null}
 
-      {isExecuting ? (
-        <div className="approval-result">Executing…</div>
-      ) : null}
+          {isExecuting ? (
+            <div className="approval-result">Executing…</div>
+          ) : null}
+        </>
+      )}
 
       {isExecuted ? (
         <div className="approval-result approved">Executed.</div>
@@ -96,11 +122,13 @@ function ActionCard({ action, onDecide, onExecute, busy, executeBusy, realSendin
         <p className="execution-result error">{action.execution_error}</p>
       ) : null}
 
-      {isExecuted ? (
-        <p className="empty-hint">Case status is now: Awaiting response.</p>
+      {isExecuted && !caseResolved ? (
+        <p className="empty-hint">
+          Action complete — the case is now awaiting the company&apos;s response.
+        </p>
       ) : null}
 
-      {isPending ? (
+      {isPending && !caseResolved ? (
         <div className="action-buttons">
           <button
             className="approve"
@@ -119,7 +147,7 @@ function ActionCard({ action, onDecide, onExecute, busy, executeBusy, realSendin
         </div>
       ) : null}
 
-      {isApproved ? (
+      {isApproved && !caseResolved ? (
         <div>
           {confirming ? (
             <div className="real-send-confirm">
@@ -170,8 +198,17 @@ function ActionCard({ action, onDecide, onExecute, busy, executeBusy, realSendin
   )
 }
 
-function ActionReview({ actions, onDecide, onExecute, busy, executeBusy, executionConfig }) {
+function ActionReview({
+  actions,
+  onDecide,
+  onExecute,
+  busy,
+  executeBusy,
+  executionConfig,
+  caseStatus,
+}) {
   const relevant = actions.filter((action) => action.status !== 'draft')
+  const caseResolved = caseStatus === 'resolved'
   const realSendingEnabled = executionConfig
     ? executionConfig.real_sending_enabled === true
     : false
@@ -203,13 +240,19 @@ function ActionReview({ actions, onDecide, onExecute, busy, executeBusy, executi
       <div className="panel-heading">
         <h2>Recommended Action</h2>
         <p className="panel-hint">
-          {waiting ? 'Awaiting your decision or execution.' : 'No action currently waiting for approval.'}
+          {caseResolved
+            ? 'Case resolved — no actions are available.'
+            : waiting
+              ? 'Awaiting your decision or execution.'
+              : 'No action currently waiting for approval.'}
         </p>
       </div>
-      <div className={`channel-badge channel-${executionConfig && executionConfig.channel}`}>
-        <span className="channel-badge-label">Channel:</span> {channelLabel}
-      </div>
-      {realSendingEnabled ? (
+      {!caseResolved ? (
+        <div className={`channel-badge channel-${executionConfig && executionConfig.channel}`}>
+          <span className="channel-badge-label">Channel:</span> {channelLabel}
+        </div>
+      ) : null}
+      {realSendingEnabled && !caseResolved ? (
         <p className="real-channel-warning">
           SMTP is active. Executing an approved action will send a real email
           through the configured local SMTP relay.
@@ -224,6 +267,7 @@ function ActionReview({ actions, onDecide, onExecute, busy, executeBusy, executi
           busy={busy}
           executeBusy={executeBusy}
           realSendingEnabled={realSendingEnabled}
+          caseResolved={caseResolved}
         />
       ))}
     </div>
